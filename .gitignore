@@ -1,0 +1,12 @@
+# Per-run state: logs, run directories, rendered prompts and settings.
+# Kept out of git — it is a record of what happened on one machine, and run
+# directories contain issue descriptions and PR drafts.
+.state/
+
+# The live configuration: paths, tracker keys and usernames are per-person.
+# config.example.json is the one that ships.
+config/config.json
+
+# Unpublished blog draft. It is written in the first person about one specific
+# workplace, so it stays out of the repo until it is published somewhere.
+100paper-ai-harnes-blog.md

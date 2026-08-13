@@ -1,0 +1,117 @@
+{
+  "$comment": [
+    "Copy to config.json and edit. Everything the harness needs to run lives",
+    "here — the scripts hold no project-specific knowledge.",
+    "Paths may use ~ and are expanded at runtime.",
+    "Every value below is a placeholder: replace it with your own."
+  ],
+  "project": {
+    "name": "my-app",
+    "repo": "my-org/my-app",
+    "checkout": "~/Workspace/my-app",
+    "base_branch": "main",
+    "worktree_pattern": "~/Workspace/{project}-{key}",
+    "branch_pattern": "{key}-{slug}"
+  },
+  "tracker": {
+    "kind": "jira",
+    "$kinds": "jira | trello | github-issues (see trackers/README.md)",
+    "scope": {
+      "$comment": "What to mine. Either a parent issue/epic, or a label, or both.",
+      "parent": "PROJ-100",
+      "label": null
+    },
+    "owner": {
+      "$comment": "Who the work is for. Used to filter eligible items and to assign.",
+      "tracker_user": "your.name",
+      "tracker_email": "your.name@example.com",
+      "github_user": "your-github-handle"
+    },
+    "exclude_labels": [
+      "hitl"
+    ],
+    "$exclude_labels": "Items carrying any of these are dropped before the model sees them — the 'needs a human decision first' escape hatch.",
+    "in_progress_status": "In Progress"
+  },
+  "run": {
+    "schedule": "06:00",
+    "$schedule": "local time, HH:MM — install.sh turns this into the launchd calendar entry",
+    "max_items": 3,
+    "orchestrator_model": "opus",
+    "worker_model": "sonnet",
+    "turbo_concurrency": 2
+  },
+  "verify": {
+    "$comment": [
+      "Commands run inside each worktree before pushing. The harness never passes --no-verify, so the hooks must actually run: hook_probe proves they resolve, and it is a command rather than a path for the reason in $hook_probe below.",
+      "These examples assume a pnpm/turbo monorepo — replace them with your project's own."
+    ],
+    "install": "HUSKY=0 pnpm install --frozen-lockfile",
+    "hook_install": "pnpm prepare",
+    "hook_probe": "test -x \"$(git config core.hooksPath)/pre-push\"",
+    "env_sync": "~/Workspace/sync-envs.sh {project} {worktree}",
+    "$env_sync": "Optional. Runs before install when the project needs gitignored .env files a fresh worktree does not have. Set to null if it does not.",
+    "checks": [
+      "pnpm knip",
+      "pnpm gen",
+      "pnpm typecheck",
+      "pnpm test"
+    ],
+    "generated_drift_commit": "chore(codegen): sync generated graphql types",
+    "$hook_probe": "A command, not a path: git resolves core.hooksPath relative to the worktree root, so probing a literal path can pass in one checkout and fail in another. Set core.hooksPath to an ABSOLUTE path in the main checkout and every worktree inherits working hooks — husky prepare cannot run in a worktree anyway, it writes the shared .git/config.",
+    "hooks_path": "{checkout}/.husky/_",
+    "$hooks_path": "Absolute path the runner pins core.hooksPath to before every run. Worktrees share .git/config, and hook installers (husky) rewrite that key to a RELATIVE path on every install — which resolves to a directory a fresh worktree does not have, so hooks silently stop running. Pinning it absolute makes every worktree inherit working hooks; HUSKY=0 in verify.install stops the install from undoing it. Set to null for repos without this problem."
+  },
+  "sandbox": {
+    "$comment": [
+      "Writes are confined to workspace_root plus extra_write_paths.",
+      "Network egress is confined to allowed_domains. Both are enforced by the",
+      "Claude Code sandbox, not by the prompt."
+    ],
+    "workspace_root": "~/Workspace",
+    "extra_write_paths": [
+      "~/Library/pnpm",
+      "~/.cache",
+      "~/.config/acli",
+      "/private/tmp",
+      "/tmp"
+    ],
+    "deny_write_paths": [
+      "~/Workspace/.project-envs",
+      "~/.claude"
+    ],
+    "deny_read_paths": [
+      "~/.ssh",
+      "~/.aws"
+    ],
+    "allowed_domains": [
+      "github.com",
+      "api.github.com",
+      "codeload.github.com",
+      "objects.githubusercontent.com",
+      "registry.npmjs.org",
+      "your-schema-host.example.com",
+      "your-org.atlassian.net",
+      "api.atlassian.com",
+      "auth.atlassian.com",
+      "id.atlassian.com"
+    ],
+    "$allowed_domains": "Keep this as short as the run allows. 'your-schema-host.example.com' stands for whatever host your pre-push checks have to reach (a codegen or schema-introspection endpoint, say); drop it if they reach nothing.",
+    "weaker_network_isolation": true,
+    "$weaker_network_isolation": "Required by Go CLIs (gh, acli) that verify TLS through trustd. See docs/HOW-IT-WORKS.md."
+  },
+  "pull_request": {
+    "labels": [
+      "100 Papercuts"
+    ],
+    "reviewers": [],
+    "auto_merge": false,
+    "assign_to_owner": true,
+    "$labels": "Applied to every PR the job opens, and ensured to exist on the code host before each run — gh pr create fails outright if a label is missing."
+  },
+  "notify": {
+    "enabled": true,
+    "command": null,
+    "$command": "Shell command receiving $PC_TITLE and $PC_BODY. Null uses the platform default (osascript on macOS). Set to a custom command to route elsewhere."
+  }
+}
