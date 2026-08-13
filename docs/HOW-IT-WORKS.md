@@ -96,8 +96,23 @@ tracker is brokered instead:
   "needs a human first" labels;
 - **after**: agents queue actions as JSONL; the adapter validates each one
   against `eligible.txt`, rejects bodies pointing outside the run directory,
-  allows only one target status and one assignee, and logs every accept and
-  reject.
+  allows only the two configured target statuses and one assignee, and logs
+  every accept and reject.
+
+The two statuses are the whole vocabulary: `in_progress` for work that is
+committed, `in_review` for work that has a pull request. Nothing else is
+reachable, so a run cannot mark an item done or reopen one even if it decides it
+should. The review one carries evidence rather than a claim — the queued action
+must include the pull request URL, matched against the configured repository and
+then confirmed to exist with `gh pr view` before anything moves. A transition
+queued by a run that pushed nothing is rejected, with the reason on the record.
+
+Which status to queue is a table in the prompt, not a judgement call: nothing
+written → comment only; committed but unpushed → `in_progress`; pull request
+open → `in_review`. Leaving that to the model's discretion produced runs that
+did correct work and told the board nothing, on the reasonable-sounding grounds
+that a transition "would overstate the state" — and a board that says nothing is
+how finished-but-unpublished work goes unnoticed for days.
 
 This turned out better than direct access. The agents can *propose* tracker
 changes; a deterministic script decides whether they happen. Tested by feeding
@@ -175,6 +190,26 @@ the prompt: writing the test is half the job, proving the runner collects it is
 the other half. (Sharding hides this too: the project's story command runs
 `--shard=1/4`, so a single invocation covers a quarter of the files and can look
 like confirmation.)
+
+**A tracker CLI that reported success by exiting zero.** Both tracker CLIs print
+`✗ Failure: <KEY> can't be transitioned: …` on stdout and **exit `0`**. The
+broker suppressed their output and trusted the status code, so it wrote
+`OK transition <KEY> -> In Progress` to the log for a transition that had not
+happened — and the log is the only place anyone looks afterwards, because the
+run has already exited. Found by feeding the broker a key that does not exist:
+it claimed the transition worked.
+
+Every write is now confirmed by reading the item back — the status compared
+against the target, the assignee re-read, the comment count compared before and
+after — and `OK` means the board actually changed. This is rule 4 again, in a
+place I had not thought to look: the *verifier* of the tracker writes was itself
+unverified.
+
+**A pull request URL that borrowed a real one.** The evidence check for a review
+transition first matched the URL with a glob, `pull/[0-9]*`. That accepts
+`…/pull/1387/../../evil`, and `gh` normalises it straight back to PR 1387 — so a
+URL that was not a pull request URL passed the check by borrowing a real PR's
+number. Anchored regex, digits only, both ends. Globs are not validators.
 
 **A commit scope that lied.** The commit linter's `scope-enum` had no entry for
 one of the apps in the monorepo, so the agent picked the nearest valid scope and

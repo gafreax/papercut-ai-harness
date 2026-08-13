@@ -31,7 +31,12 @@
       "hitl"
     ],
     "$exclude_labels": "Items carrying any of these are dropped before the model sees them — the 'needs a human decision first' escape hatch.",
-    "in_progress_status": "In Progress"
+    "statuses": {
+      "$comment": "The only statuses the broker will move an item to. Anything else is rejected, so a run can never mark work Done or reopen something. Use your board's exact names.",
+      "in_progress": "In Progress",
+      "in_review": "In Review"
+    },
+    "$statuses": "in_review requires evidence: the queued action must carry a pull request URL under project.repo, and the broker verifies with `gh pr view` that it exists before transitioning. Set in_review to null on a board with no review column."
   },
   "run": {
     "schedule": "06:00",

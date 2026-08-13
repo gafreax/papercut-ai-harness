@@ -35,15 +35,42 @@ never shared between agents, or appends interleave:
 {"action":"comment","key":"<KEY>","body_file":"<abs path under the run dir>"}
 {"action":"assign","key":"<KEY>"}
 {"action":"transition","key":"<KEY>","status":"{{IN_PROGRESS}}"}
+{"action":"transition","key":"<KEY>","status":"{{IN_REVIEW}}","pr":"<the PR url>"}
 {"action":"create-slice","title":"...","body_file":"<abs path>","mode":"afk","relates_to":"<KEY>"}
 ```
 
 Write comment and slice bodies as markdown files under `$PAPERCUTS_RUN_DIR/`
 (`comments/` and `slices/`) — the broker refuses paths outside it. `assign`
-always means the configured owner and `transition` only accepts
-`{{IN_PROGRESS}}`. Results land in `$PAPERCUTS_RUN_DIR/jira-actions.log`
-*after* you exit, so you will not see them: write carefully and say in your
-report what you queued.
+always means the configured owner. Results land in
+`$PAPERCUTS_RUN_DIR/jira-actions.log` *after* you exit, so you will not see
+them: write carefully and say in your report what you queued.
+
+### Which status to queue — decide by what exists, not by how it feels
+
+The board is the only place a human looks before opening the tracker, so an
+item this run touched must end the run showing the truth. Do not weigh whether
+a transition "would overstate things": read the table, queue the row that
+matches what is on disk.
+
+| What actually exists at the end of the run | Queue |
+|---|---|
+| Nothing written — no branch, no commit | `comment` only. No `assign`, no `transition`. |
+| Commits in a worktree, nothing pushed | `comment` + `assign` + `transition` → `{{IN_PROGRESS}}` |
+| Branch pushed **and** a pull request open | `comment` + `assign` + `transition` → `{{IN_REVIEW}}`, with `pr` set to the PR URL |
+| The item was dropped as already in flight | `comment` only, and only if it adds information a reader does not already have from the PR |
+
+Those two are the *only* statuses the broker accepts; it rejects anything else,
+so you cannot mark an item done or reopen one even by mistake. The review
+transition additionally requires the `pr` field, and the broker verifies with
+`gh pr view` that the pull request really exists before it moves anything — a
+URL you have not actually created will be rejected and logged. So queue the
+review transition **only after `gh pr create` returned a URL**, and paste that
+URL, never a guess at what it will be.
+
+A blocked run is exactly when this matters most: if the work is committed and
+the push failed, the item still goes to `{{IN_PROGRESS}}` and the comment
+explains the blocker. Leaving the board untouched is how three days of
+finished-but-unpublished work went unnoticed here once.
 
 ## Rehearsal mode
 
@@ -181,7 +208,10 @@ packages involved, whether this is a rehearsal, and the instructions below
   you added and how to run it), **Not verified** (anything you could not check).
 - Tracker: **do not call its CLI** — it cannot authenticate here. Queue
   `comment` (with the PR link), `assign` and `transition` in
-  `$PAPERCUTS_RUN_DIR/jira-actions/<KEY>.jsonl`, for your item only.
+  `$PAPERCUTS_RUN_DIR/jira-actions/<KEY>.jsonl`, for your item only, choosing
+  the status from the table above: `{{IN_REVIEW}}` with the PR URL you actually
+  got back from `gh pr create`, or `{{IN_PROGRESS}}` if the work is committed
+  but the push did not happen. Never both.
 - If you cannot finish: push nothing, keep the worktree, report precisely where
   you stopped and why. An honest stop is a useful result.
 

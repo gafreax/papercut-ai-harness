@@ -51,12 +51,24 @@ written by agents and is untrusted input:
 
 - reject any `key` not in `eligible.txt`;
 - reject any `body_file` outside `<run_dir>`;
-- reject any status other than `tracker.in_progress_status`;
+- reject any status other than the two in `tracker.statuses`;
+- for `tracker.statuses.in_review`, additionally require a `pr` field matching
+  `https://github.com/<project.repo>/pull/<digits>` **exactly** (anchored at
+  both ends — a glob lets `pull/1/../../x` through, and the code host will
+  cheerfully resolve it back to PR 1) and confirm with the code host that the
+  pull request exists;
 - assign only to `tracker.owner`;
 - reject unknown verbs.
 
 Log every outcome — accepted and rejected — to `<run_dir>/jira-actions.log`.
 Honour `PAPERCUTS_DRY_JIRA=1` by logging what would run instead of running it.
+
+**Confirm every write by reading the item back.** Do not report success from a
+CLI's exit code: `thomctl` and `acli` both print `✗ Failure: …` and exit `0`, so
+a status trusted blindly logs `OK transition` for a transition that never
+happened. Read the status back and compare it to the target; read the assignee
+back; compare the comment count before and after. This is the same defect class
+as an uninstalled git hook — it looks exactly like success.
 
 ### Action verbs
 
@@ -64,6 +76,7 @@ Honour `PAPERCUTS_DRY_JIRA=1` by logging what would run instead of running it.
 {"action":"comment","key":"ABC-1","body_file":"<abs path inside run dir>"}
 {"action":"assign","key":"ABC-1"}
 {"action":"transition","key":"ABC-1","status":"In Progress"}
+{"action":"transition","key":"ABC-1","status":"In Review","pr":"https://github.com/my-org/my-app/pull/42"}
 {"action":"create-slice","title":"...","body_file":"<abs path>","mode":"afk|hitl","relates_to":"ABC-1"}
 ```
 

@@ -130,8 +130,14 @@ export PC_TRACKER_PARENT="$(cfg '.tracker.scope.parent')"
 export PC_TRACKER_LABEL="$(cfg '.tracker.scope.label')"
 export PC_TRACKER_USER="$(cfg '.tracker.owner.tracker_user')"
 export PC_TRACKER_EMAIL="$(cfg '.tracker.owner.tracker_email')"
-export PC_IN_PROGRESS_STATUS="$(cfg '.tracker.in_progress_status')"
 export PC_EXCLUDE_LABELS="$(cfg_arr '.tracker.exclude_labels' | tr '\n' ' ')"
+# The only two statuses the broker may move an item to. `in_progress_status` is
+# the older single-status spelling, still honoured so an existing config works.
+export PC_STATUS_IN_PROGRESS="$(cfg '.tracker.statuses.in_progress // .tracker.in_progress_status')"
+export PC_STATUS_IN_REVIEW="$(cfg '.tracker.statuses.in_review')"
+# The broker verifies a review transition against a real pull request, so it
+# needs to know which repository the URL is allowed to point at.
+export PC_REPO="$(cfg '.project.repo')"
 
 agent_status=0
 if [[ "$MODE" == "--replay-only" ]]; then
