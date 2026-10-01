@@ -44,6 +44,7 @@ rehearses, reads the results with you, and only then schedules.
 
 ```
 bin/papercuts-daily.sh   the runner: tracker dump → agents → validated replay
+bin/papercuts-lib.sh     the runner's after-the-fact decisions (pending, parking), callable on their own
 bin/render.sh            materialises prompt.md + sandbox-settings.json per run
 bin/install.sh           generates and loads the launchd job from config.json
 bin/uninstall.sh         unloads it, keeps the logs
@@ -76,6 +77,7 @@ finished-but-unpublished work once went unnoticed here.
 |---|---|
 | PRs opened, nothing left over | *"N PR opened — all work published"* |
 | Work committed but not pushed | *"N branch(es) to publish"* + branch names |
+| GitHub could not be asked about a branch | *"N branch(es) not verified"* + branch names |
 | Aborted early (PATH, auth, tracker down) | *"run aborted"* + the reason |
 | Nothing eligible | *"nothing to do"* |
 
@@ -86,6 +88,15 @@ to silence them.
 Only branches matching the job's own `branch_pattern` count as pending: the
 worktree glob also matches the human's worktrees, and reporting their unpushed
 work would make the notification untrustworthy.
+
+A branch whose remote copy is gone is checked against GitHub before it counts.
+The project squash-merges and deletes merged branches, so the original commits
+never appear on `main` by SHA and would look unpublished forever — three merged
+PRs were reported as "to publish" every morning from 2026-08-15 to 2026-10-01
+that way. If GitHub reports a PR for the branch as merged or closed **and**
+that PR contains the local HEAD, the branch is done; a commit made after the
+merge still counts as pending. If `gh` fails, the branch is reported as *not verified*, on its own
+line and in the notification, rather than guessed either way.
 
 ## After a run
 

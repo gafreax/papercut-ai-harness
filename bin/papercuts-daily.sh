@@ -73,6 +73,8 @@ LOCK="$STATE_DIR/.lock"
 
 log() { print -r -- "[$(date +%H:%M:%S)] $*" >>"$LOG"; }
 
+source "$HARNESS_DIR/bin/papercuts-lib.sh"
+
 # A run that fails at 06:00 and says nothing is indistinguishable from a run
 # that never happened — which is how three days of blocked work went unnoticed.
 # Every run ends with a notification, success or not.
@@ -303,7 +305,7 @@ fi
 
 # Worktrees holding commits that never reached the remote. This is the state the
 # job sat in for three days without telling anyone: work done, nothing shipped.
-typeset -a pending
+typeset -a pending unknown
 wt_glob="$(expand "$(cfg '.project.worktree_pattern')")"
 wt_glob="${wt_glob//\{project\}/$PROJECT_NAME}"
 wt_glob="${wt_glob//\{key\}/*}"
@@ -321,23 +323,32 @@ for d in ${~wt_glob}; do
   branch="$(git -C "$d" branch --show-current 2>/dev/null)" || continue
   [[ -n "$branch" ]] || continue
   [[ "$branch" =~ $branch_re ]] || continue
-  if git -C "$d" rev-parse --verify -q "origin/$branch" >/dev/null 2>&1; then
-    ahead=$(git -C "$d" rev-list --count "origin/$branch..HEAD" 2>/dev/null || print 0)
-  else
-    ahead=$(git -C "$d" rev-list --count "origin/$(cfg '.project.base_branch')..HEAD" 2>/dev/null || print 0)
-  fi
-  (( ahead > 0 )) && pending+=("$branch")
+  case "$(branch_publication_state "$d" "$branch" "$PC_REPO" "$(cfg '.project.base_branch')")" in
+    pending) pending+=("$branch") ;;
+    unknown) unknown+=("$branch") ;;
+  esac
 done
 
-summary="published: $published, pending: ${#pending}"
+summary="published: $published, pending: ${#pending}, unknown: ${#unknown}"
 [[ ${#pending} -gt 0 ]] && log "UNPUBLISHED WORK: ${pending[*]}"
+[[ ${#unknown} -gt 0 ]] && log "UNVERIFIED (GitHub unreachable, may or may not be merged): ${unknown[*]}"
 log "outcome — $summary"
 
+# An unverified branch is named in every notification that can carry it, and
+# gets one of its own when nothing else is wrong: otherwise a GitHub outage
+# would end the day as "nothing to do", which is the lie this block exists to
+# prevent.
+unverified_note=""
+[[ ${#unknown} -gt 0 ]] && unverified_note=" Could not check with GitHub: ${unknown[*]}."
+
 if [[ $agent_status -ne 0 ]]; then
-  notify "Paper cuts: run failed" "exit $agent_status. See $LOG"
+  notify "Paper cuts: run failed" "exit $agent_status. See $LOG.$unverified_note"
 elif [[ ${#pending} -gt 0 ]]; then
   notify "Paper cuts: ${#pending} branch(es) to publish" \
-         "${pending[*]} — committed but not pushed. $published PR opened."
+         "${pending[*]} — committed but not pushed. $published PR opened.$unverified_note"
+elif [[ ${#unknown} -gt 0 ]]; then
+  notify "Paper cuts: ${#unknown} branch(es) not verified" \
+         "GitHub could not be asked whether ${unknown[*]} landed. $published PR opened. See $LOG"
 elif [[ "$published" -gt 0 ]]; then
   notify "Paper cuts: $published PR opened" "All work published. Nothing pending."
 else
