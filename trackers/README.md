@@ -33,6 +33,7 @@ Write, into `<run_dir>`:
 | `candidates.json` | array of `{key, summary, status, assignee, labels, url}` |
 | `eligible.txt` | one key per line — the **only** keys the agents may act on |
 | `issues/<KEY>.json` | full item: description **and** comments |
+| `updated.tsv` | optional: `<KEY> TAB <last-updated>` per eligible key, the tracker's value verbatim |
 
 Eligibility is the adapter's job: drop anything closed, assigned to somebody
 other than `tracker.owner.tracker_user`, or carrying a label in
@@ -62,6 +63,13 @@ written by agents and is untrusted input:
 
 Log every outcome — accepted and rejected — to `<run_dir>/jira-actions.log`.
 Honour `PAPERCUTS_DRY_JIRA=1` by logging what would run instead of running it.
+
+Optionally write `<run_dir>/parked.tsv`: `<KEY> TAB <last-updated>` for every
+key that received a comment that was really posted and no `assign` or
+`transition`, with the last-updated value read back **after** all of this
+replay's writes. Together with `updated.tsv` from `dump`, it lets the runner
+hold back items a previous run already dropped until they change (see the
+README). An adapter that writes neither file simply never parks anything.
 
 **Confirm every write by reading the item back.** Do not report success from a
 CLI's exit code: `thomctl` and `acli` both print `✗ Failure: …` and exit `0`, so

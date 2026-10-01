@@ -25,6 +25,11 @@ cd "$PC_CHECKOUT" || { print -r -- "jira.sh: cannot cd into $PC_CHECKOUT" >&2; e
 
 jlog() { print -r -- "[$(date +%H:%M:%S)] $*" | tee -a "$run_dir/jira-actions.log"; }
 
+# The item's last-modified timestamp, verbatim. Both verbs need it: dump to
+# report the current value, replay to record the value right after this run's
+# own writes. Compared as a string, so it must never be reformatted.
+item_updated() { acli jira workitem view "$1" --fields updated --json 2>/dev/null | jq -r '.fields.updated // empty'; }
+
 # --------------------------------------------------------------------------
 # dump
 # --------------------------------------------------------------------------
@@ -56,10 +61,20 @@ if [[ "$verb" == "dump" ]]; then
     "$run_dir/candidates.json" \
     | { grep -vxF -f "$run_dir/excluded.txt" || true; } >"$run_dir/eligible.txt"
 
+  # updated.tsv is what lets the runner hold back items a previous run already
+  # dropped (park_filter in bin/papercuts-lib.sh). thomctl does not expose the
+  # field, so it comes from acli. A key with no line here stays eligible.
+  : >"$run_dir/updated.tsv"
   while read -r key; do
     [[ -z "$key" ]] && continue
     thomctl issue view "$key" --json >"$run_dir/issues/$key.json" 2>/dev/null \
       || print -r -- "jira.sh: could not dump $key" >&2
+    upd=$(item_updated "$key")
+    if [[ -n "$upd" ]]; then
+      print -r -- "$key"$'\t'"$upd" >>"$run_dir/updated.tsv"
+    else
+      print -r -- "jira.sh: could not read the last update of $key" >&2
+    fi
   done <"$run_dir/eligible.txt"
 
   print -r -- "$(wc -l <"$run_dir/eligible.txt" | tr -d ' ') eligible"
@@ -101,6 +116,12 @@ run_jira() {
   "$@" >/dev/null 2>&1
 }
 
+# Keys this replay really commented on, and keys an agent queued work for.
+# The difference is what an item looks like when a run looked at it and
+# dropped it: see the end of the loop.
+typeset -A commented worked
+: >"$run_dir/parked.tsv"
+
 setopt NULL_GLOB
 for f in "$run_dir"/jira-actions/*.jsonl; do
   while read -r line; do
@@ -126,6 +147,7 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
           after=$(comment_count "$key")
           if [[ -n "$before" && -n "$after" && "$after" -gt "$before" ]]; then
             jlog "OK comment $key (comments $before -> $after)"
+            commented[$key]=1
           else
             jlog "FAIL comment $key (comment count stayed at ${before:-unknown} — nothing was posted)"
           fi
@@ -134,6 +156,7 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
 
       assign)
         is_eligible "$key" || { jlog "REJECT assign: $key not eligible"; continue; }
+        worked[$key]=1
         if dry; then
           run_jira acli jira workitem assign --key "$key" --assignee "$PC_TRACKER_EMAIL"
         else
@@ -151,6 +174,9 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
         want=$(jq -r '.status // empty' <<<"$line")
         pr=$(jq -r '.pr // empty' <<<"$line")
         is_eligible "$key" || { jlog "REJECT transition: $key not eligible"; continue; }
+        # Marked before the status is validated: a rejected transition still
+        # means an agent believed there was work on this item.
+        worked[$key]=1
 
         # Two allowed destinations, and nothing else: a run can never mark an
         # item Done, reopen one, or invent a status. The review one additionally
@@ -242,4 +268,21 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
         ;;
     esac
   done <"$f"
+done
+
+# A key that got a comment and no assign or transition is one the run looked
+# at and dropped (or split: slices leave the original with a comment only).
+# Record its `updated` as it stands now, after every write of this replay —
+# a slice link touches the original too — so that tomorrow "unchanged" means
+# "nobody but this job has touched it". Dry runs never get here with a key:
+# `commented` is only set by a comment that was really posted.
+for key in ${(k)commented}; do
+  (( ${+worked[$key]} )) && continue
+  upd=$(item_updated "$key")
+  if [[ -n "$upd" ]]; then
+    print -r -- "$key"$'\t'"$upd" >>"$run_dir/parked.tsv"
+    jlog "PARK $key (updated $upd) — held out of the next runs until it changes"
+  else
+    jlog "WARN could not read the last update of $key — it will be judged again next run"
+  fi
 done

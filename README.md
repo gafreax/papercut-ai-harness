@@ -1,118 +1,103 @@
-# papercut-ai-harness
+# Tracker adapters
 
-An unattended daily run that mines a backlog for genuinely small tickets, fixes
-a few of them — each in its own git worktree, with tests and the project's own
-checks — and leaves reviewable pull requests.
+The harness never talks to an issue tracker directly. It shells out to one
+adapter, chosen by `tracker.kind` in `config.json`. Swapping Jira for Trello,
+GitHub Issues or anything else means writing one file here — nothing else in
+the harness changes.
 
-Named after Ubuntu's [One Hundred Papercuts](https://wiki.ubuntu.com/One%20Hundred%20Papercuts):
-small annoyances that are quick to fix and never quite worth a sprint.
+## Why an adapter and not a library call
 
-## What makes it different from "prompt a model to fix a ticket"
+The agents run **sandboxed** and cannot authenticate: CLIs like `acli` and `gh`
+read their credentials from the macOS keyring, which the sandbox blocks by
+design (see `docs/HOW-IT-WORKS.md`). So the adapter runs **outside** the
+sandbox, in the runner, twice per run:
 
-- **The agents cannot authenticate to the issue tracker.** They run sandboxed;
-  the runner dumps what they need to read and validates every write they queue.
-- **No `--no-verify`, ever** — and the harness checks that the hooks are really
-  installed, because git skips missing hooks in silence.
-- **A rehearsal mode that cannot publish**, enforced by withholding the GitHub
-  token rather than by asking the agents nicely.
-- **Splitting instead of shrinking.** A ticket too big to delegate comes back as
-  tracked slices with a comment explaining why, not as a partial fix.
+- **before** the agents start — dump everything they need to read into files;
+- **after** they exit — replay the actions they queued, validating each one.
 
-Read [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) for the design and for the
-defects the first rehearsal caught.
+That is not a workaround, it is the security boundary: the agents can propose
+tracker writes but never perform them, and the runner is the only thing holding
+credentials.
 
-## Requirements
+## Contract
 
-macOS (launchd), `claude`, `git`, `gh`, `jq`, and the CLI of your tracker.
-The project you point it at supplies its own package manager and checks.
+An adapter is an executable shell script sourced with `TRACKER_CMD` set to one
+of the verbs below. It must implement exactly these:
 
-## Quickstart
+### `dump <run_dir>`
 
-```sh
-cp config/config.example.json config/config.json
-$EDITOR config/config.json          # or: run the activate-papercuts skill
+Write, into `<run_dir>`:
 
-zsh bin/papercuts-daily.sh --dry    # rehearsal: real work, publishes nothing
-zsh bin/install.sh                  # schedule it, once the rehearsal looks right
-```
-
-Guided setup: open a Claude Code session here and invoke the
-**activate-papercuts** skill — it detects what it can, asks for the rest,
-rehearses, reads the results with you, and only then schedules.
-
-## Layout
-
-```
-bin/papercuts-daily.sh   the runner: tracker dump → agents → validated replay
-bin/papercuts-lib.sh     the runner's after-the-fact decisions (pending, parking), callable on their own
-bin/render.sh            materialises prompt.md + sandbox-settings.json per run
-bin/install.sh           generates and loads the launchd job from config.json
-bin/uninstall.sh         unloads it, keeps the logs
-config/config.example.json   every project-specific value lives here
-prompts/orchestrator.md  the orchestrator prompt ({{placeholders}} from config)
-trackers/                one adapter per tracker — jira works, others are skeletons
-sandbox/                 notes on the containment settings
-docs/HOW-IT-WORKS.md     design, trade-offs, and what the rehearsal caught
-.state/                  logs and per-run directories (created on first run)
-```
-
-## Modes
-
-| Command | Agents | GitHub | Tracker |
-|---|---|---|---|
-| `papercuts-daily.sh` | work | push + real PRs | real writes |
-| `papercuts-daily.sh --dry` | work | **impossible** — no token exported | logged only |
-| `papercuts-daily.sh --replay-only` | skipped | untouched | executes an existing queue |
-
-`--replay-only` is also how you recover: if a run dies after the agents queued
-their tracker actions, it drives them without redoing the work.
-
-## Notifications
-
-Every run ends with one, success or failure — a job that fails silently at 06:00
-is indistinguishable from a job that never ran, which is how three days of
-finished-but-unpublished work once went unnoticed here.
-
-| Situation | Notification |
+| File | Content |
 |---|---|
-| PRs opened, nothing left over | *"N PR opened — all work published"* |
-| Work committed but not pushed | *"N branch(es) to publish"* + branch names |
-| GitHub could not be asked about a branch | *"N branch(es) not verified"* + branch names |
-| Aborted early (PATH, auth, tracker down) | *"run aborted"* + the reason |
-| Nothing eligible | *"nothing to do"* |
+| `candidates.json` | array of `{key, summary, status, assignee, labels, url}` |
+| `eligible.txt` | one key per line — the **only** keys the agents may act on |
+| `issues/<KEY>.json` | full item: description **and** comments |
+| `updated.tsv` | optional: `<KEY> TAB <last-updated>` per eligible key, the tracker's value verbatim |
 
-macOS notifications by default; set `notify.command` to route them elsewhere —
-the command receives `$PC_TITLE` and `$PC_BODY`. Set `notify.enabled` to false
-to silence them.
+Eligibility is the adapter's job: drop anything closed, assigned to somebody
+other than `tracker.owner.tracker_user`, or carrying a label in
+`tracker.exclude_labels`. Whatever lands in `eligible.txt` is what `replay`
+will accept later — the two must agree, because that file is the authorisation
+list.
 
-Only branches matching the job's own `branch_pattern` count as pending: the
-worktree glob also matches the human's worktrees, and reporting their unpushed
-work would make the notification untrustworthy.
+Exit non-zero if the tracker cannot be reached. The runner aborts rather than
+starting agents with a stale or empty view.
 
-A branch whose remote copy is gone is checked against GitHub before it counts.
-The project squash-merges and deletes merged branches, so the original commits
-never appear on `main` by SHA and would look unpublished forever — three merged
-PRs were reported as "to publish" every morning from 2026-08-15 to 2026-10-01
-that way. If GitHub reports a PR for the branch as merged or closed **and**
-that PR contains the local HEAD, the branch is done; a commit made after the
-merge still counts as pending. If `gh` fails, the branch is reported as *not verified*, on its own
-line and in the notification, rather than guessed either way.
+### `replay <run_dir>`
 
-## After a run
+Read every `<run_dir>/jira-actions/*.jsonl` (one file per item, one JSON object
+per line) and execute the actions. **Validate before executing** — the queue is
+written by agents and is untrusted input:
 
-```sh
-tail -40 .state/logs/papercuts-$(date +%F).log   # what the runner did
-cat .state/runs/$(date +%F)/report.md            # what the orchestrator decided
-cat .state/runs/$(date +%F)/jira-actions.log     # accepted and rejected writes
-git -C <checkout> worktree list                  # what is still on disk
+- reject any `key` not in `eligible.txt`;
+- reject any `body_file` outside `<run_dir>`;
+- reject any status other than the two in `tracker.statuses`;
+- for `tracker.statuses.in_review`, additionally require a `pr` field matching
+  `https://github.com/<project.repo>/pull/<digits>` **exactly** (anchored at
+  both ends — a glob lets `pull/1/../../x` through, and the code host will
+  cheerfully resolve it back to PR 1) and confirm with the code host that the
+  pull request exists;
+- assign only to `tracker.owner`;
+- reject unknown verbs.
+
+Log every outcome — accepted and rejected — to `<run_dir>/jira-actions.log`.
+Honour `PAPERCUTS_DRY_JIRA=1` by logging what would run instead of running it.
+
+Optionally write `<run_dir>/parked.tsv`: `<KEY> TAB <last-updated>` for every
+key that received a comment that was really posted and no `assign` or
+`transition`, with the last-updated value read back **after** all of this
+replay's writes. Together with `updated.tsv` from `dump`, it lets the runner
+hold back items a previous run already dropped until they change (see the
+README). An adapter that writes neither file simply never parks anything.
+
+**Confirm every write by reading the item back.** Do not report success from a
+CLI's exit code: `thomctl` and `acli` both print `✗ Failure: …` and exit `0`, so
+a status trusted blindly logs `OK transition` for a transition that never
+happened. Read the status back and compare it to the target; read the assignee
+back; compare the comment count before and after. This is the same defect class
+as an uninstalled git hook — it looks exactly like success.
+
+### Action verbs
+
+```json
+{"action":"comment","key":"ABC-1","body_file":"<abs path inside run dir>"}
+{"action":"assign","key":"ABC-1"}
+{"action":"transition","key":"ABC-1","status":"In Progress"}
+{"action":"transition","key":"ABC-1","status":"In Review","pr":"https://github.com/my-org/my-app/pull/42"}
+{"action":"create-slice","title":"...","body_file":"<abs path>","mode":"afk|hitl","relates_to":"ABC-1"}
 ```
 
-Worktrees with unpushed commits are left in place on purpose — they are the
-evidence when something went wrong.
+`create-slice` is how an agent says "this is too big, here are the pieces". The
+adapter creates each piece under the configured scope and links it back.
 
 ## Status
 
-Working against Jira + GitHub + a pnpm/turbo monorepo. `trackers/trello.sh` and
-`trackers/github-issues.sh` are deliberate skeletons: they carry the mapping
-notes needed to implement them and keep the adapter contract from silently
-becoming Jira-shaped. See [trackers/README.md](trackers/README.md).
+| Adapter | State |
+|---|---|
+| `jira.sh` | working — Jira via `thomctl` (PRD/sub-issue verbs) and `acli` (assign/transition) |
+| `trello.sh` | skeleton — verbs stubbed, mapping notes inside |
+| `github-issues.sh` | skeleton — verbs stubbed, mapping notes inside |
+
+The two skeletons exist to keep the seam honest: if the contract only ever had
+one implementation, it would quietly grow Jira-shaped assumptions.

@@ -67,3 +67,86 @@ branch_publication_state() {
     print pending
   fi
 }
+
+# --------------------------------------------------------------------------
+# Items a previous run already dropped
+# --------------------------------------------------------------------------
+# The orchestrator is told to read an item's comments before re-judging it,
+# but the dump never contains them (`thomctl issue view` does not return
+# comments). So it re-judged the same two items every morning, reached the
+# same verdict, and posted the same explanation again: one new comment per
+# item per day.
+#
+# The fix lives here, outside the agents: the ledger records, for every item a
+# run touched with comments only, the item's `updated` timestamp as read back
+# right after the run's own last write. While the tracker still reports that
+# exact value, nobody has touched the item since — no human comment, no edit —
+# and it is held out of eligible.txt. Any change moves `updated`, and the item
+# is a candidate again. Exact string equality, not a date comparison: no
+# timezone parsing, no clock skew between this machine and the tracker.
+#
+# Ledger lines: <KEY> TAB <updated as the tracker reported it> TAB <date parked>
+
+# Removes parked, unchanged items from <eligible> in place and lists them in
+# <parked_out>. <updated> holds "<KEY> TAB <updated>" for this run's dump.
+# An item whose current `updated` could not be read stays eligible: a missed
+# read must cost one duplicate comment at worst, never hide an item for good.
+park_filter() {
+  local eligible="$1" updated="$2" ledger="$3" parked_out="$4"
+  local key upd on
+  local -A now was since
+  local -a keep
+
+  : >"$parked_out"
+  [[ -s "$ledger" ]] || return 0
+
+  if [[ -r "$updated" ]]; then
+    while IFS=$'\t' read -r key upd; do
+      [[ -n "$key" ]] && now[$key]="$upd"
+    done <"$updated"
+  fi
+  while IFS=$'\t' read -r key upd on; do
+    [[ -n "$key" ]] || continue
+    was[$key]="$upd"
+    since[$key]="$on"
+  done <"$ledger"
+
+  while read -r key; do
+    [[ -n "$key" ]] || continue
+    if [[ -z "${was[$key]:-}" ]]; then
+      keep+=("$key")
+    elif [[ -z "${now[$key]:-}" ]]; then
+      log "WARN: $key was dropped on ${since[$key]}, but its last update could not be read — re-evaluating it rather than hiding it"
+      keep+=("$key")
+    elif [[ "${now[$key]}" == "${was[$key]}" ]]; then
+      log "parked: $key — dropped on ${since[$key]}, unchanged on the tracker since"
+      print -r -- "$key" >>"$parked_out"
+    else
+      log "unparked: $key changed on the tracker after it was dropped on ${since[$key]} (${was[$key]} -> ${now[$key]})"
+      keep+=("$key")
+    fi
+  done <"$eligible"
+
+  # `print -l` with no arguments still prints a newline, which `wc -l` would
+  # count as one eligible item.
+  if (( ${#keep} )); then
+    print -rl -- "${keep[@]}" >"$eligible"
+  else
+    : >"$eligible"
+  fi
+}
+
+# Merges this run's "<KEY> TAB <updated>" lines into the ledger, replacing any
+# older entry for the same key, stamped with <date>.
+park_record() {
+  local run_parked="$1" ledger="$2" date="$3"
+  [[ -s "$run_parked" ]] || return 0
+  local tmp="$ledger.tmp.$$"
+  [[ -e "$ledger" ]] || : >"$ledger"
+  awk -F'\t' -v OFS='\t' -v date="$date" '
+    NR == FNR { if ($1 != "") fresh[$1] = $2; next }
+    !($1 in fresh)
+    END { for (k in fresh) print k, fresh[k], date }
+  ' "$run_parked" "$ledger" >"$tmp" && mv "$tmp" "$ledger"
+  log "parked for the next runs: $(cut -f1 "$run_parked" | tr '\n' ' ')"
+}

@@ -75,6 +75,10 @@ log() { print -r -- "[$(date +%H:%M:%S)] $*" >>"$LOG"; }
 
 source "$HARNESS_DIR/bin/papercuts-lib.sh"
 
+# Items a previous run dropped and nobody has touched since. See park_filter in
+# bin/papercuts-lib.sh for why this exists and how an item gets out of it.
+PARKED_FILE="$STATE_DIR/parked.tsv"
+
 # A run that fails at 06:00 and says nothing is indistinguishable from a run
 # that never happened — which is how three days of blocked work went unnoticed.
 # Every run ends with a notification, success or not.
@@ -232,11 +236,24 @@ if ! zsh "$TRACKER" dump "$RUN_DIR" >>"$LOG" 2>&1; then
   abort "tracker dump failed — is the CLI still authenticated? ('acli jira auth status')"
 fi
 
+# Before anything reads eligible.txt: it is both the agents' whole world and
+# the broker's authorisation list, so an item held out here can be neither
+# re-judged nor commented on again.
+park_filter "$RUN_DIR/eligible.txt" "$RUN_DIR/updated.tsv" "$PARKED_FILE" "$RUN_DIR/parked-skipped.txt"
+parked_count=$(wc -l <"$RUN_DIR/parked-skipped.txt" | tr -d ' ')
+
 eligible_count=$(wc -l <"$RUN_DIR/eligible.txt" | tr -d ' ')
-log "eligible candidates: $eligible_count ($(tr '\n' ' ' <"$RUN_DIR/eligible.txt"))"
+log "eligible candidates: $eligible_count ($(tr '\n' ' ' <"$RUN_DIR/eligible.txt")), parked: $parked_count"
 if [[ "$eligible_count" -eq 0 ]]; then
   log "nothing eligible today — not starting the agent"
-  notify "Paper cuts: nothing to do" "No eligible item in the backlog today."
+  if (( parked_count > 0 )); then
+    notify "Paper cuts: nothing to do" "No new eligible item. $parked_count already dropped and unchanged since: $(tr '\n' ' ' <"$RUN_DIR/parked-skipped.txt")"
+  else
+    notify "Paper cuts: nothing to do" "No eligible item in the backlog today."
+  fi
+  # A run that got this far did not abort. With parking, this early exit is the
+  # ordinary quiet day, so it has to close an abort streak like the bottom does.
+  rm -f "$STREAK_FILE"
   exit 0
 fi
 
@@ -293,6 +310,10 @@ fi  # end of the full-run block skipped by --replay-only
 # --------------------------------------------------------------------------
 zsh "$TRACKER" replay "$RUN_DIR" >>"$LOG" 2>&1
 log "tracker replay done — outcomes in $RUN_DIR/jira-actions.log"
+
+# The adapter writes parked.tsv only for comments it actually posted, so a dry
+# run, which posts nothing, parks nothing.
+park_record "$RUN_DIR/parked.tsv" "$PARKED_FILE" "$TODAY"
 
 # --------------------------------------------------------------------------
 # Outcome: what got out, and what is stuck
