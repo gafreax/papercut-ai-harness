@@ -90,6 +90,38 @@ notify() {
   fi
 }
 
+# A banner is transient. If it fires while the Mac is locked, while Focus is
+# on, or while nobody is looking, nothing is left behind and the next day's
+# identical failure looks like the first one. That is exactly how the tracker
+# token expired on 2026-08-24 and went unnoticed for 27 consecutive aborts.
+# The streak file is the durable half: the count survives on disk until a run
+# gets through, and it goes into the notification text so a repeat cannot read
+# like a one-off.
+STREAK_FILE="$STATE_DIR/consecutive-aborts"
+
+# The file holds "<count> <first-failure date>". The date has to be carried
+# inside it: the file's own mtime is rewritten by every abort, so it would
+# always read as today and the streak would lose the one fact that matters —
+# how long this has been broken.
+abort() {
+  local body="$1"
+  local n=0 first="$TODAY"
+  if [[ -r "$STREAK_FILE" ]]; then
+    read -r n first <"$STREAK_FILE"
+    [[ -n "$first" ]] || first="$TODAY"
+  fi
+  (( n = n + 1 ))
+  print -r -- "$n $first" >"$STREAK_FILE"
+  log "ABORT: $body"
+  if (( n > 1 )); then
+    log "       $n run consecutivi falliti, il primo il $first"
+    notify "Paper cuts: $n run falliti di fila (dal $first)" "$body"
+  else
+    notify "Paper cuts: run aborted" "$body"
+  fi
+  exit 1
+}
+
 # One run at a time: a previous run still chewing through worktrees must not be
 # joined by a second one.
 if ! mkdir "$LOCK" 2>/dev/null; then
@@ -114,15 +146,13 @@ required=(claude git gh jq)
 [[ "$TRACKER_KIND" == "jira" ]] && required+=(thomctl acli)
 for bin in $required; do
   if ! command -v "$bin" >/dev/null 2>&1; then
-    log "ABORT: $bin not found on PATH"
     log "       PATH was: $PATH"
-    notify "Paper cuts: run aborted" "$bin not found on PATH"
     log "       If this ran from launchd, reinstall with bin/install.sh from an interactive shell that can see $bin."
-    exit 1
+    abort "$bin not found on PATH"
   fi
 done
 
-cd "$CHECKOUT" || { log "ABORT: checkout $CHECKOUT not found"; notify "Paper cuts: run aborted" "checkout not found: $CHECKOUT"; exit 1; }
+cd "$CHECKOUT" || abort "checkout not found: $CHECKOUT"
 
 # Config the tracker adapter reads from the environment.
 export PC_CHECKOUT="$CHECKOUT"
@@ -142,7 +172,7 @@ export PC_REPO="$(cfg '.project.repo')"
 agent_status=0
 if [[ "$MODE" == "--replay-only" ]]; then
   log "replay-only: skipping the tracker dump and the agent run, brokering $RUN_DIR"
-  [[ -f "$RUN_DIR/eligible.txt" ]] || { log "ABORT: no eligible.txt in $RUN_DIR"; exit 1; }
+  [[ -f "$RUN_DIR/eligible.txt" ]] || abort "no eligible.txt in $RUN_DIR"
 else
 
 # Pin core.hooksPath to an absolute path, every run, from out here where we are
@@ -197,9 +227,7 @@ git ls-remote --heads origin 2>/dev/null | awk '{print $2}' | sort >"$RUN_DIR/re
 # which the sandbox blocks. So everything they need to READ is dumped here;
 # everything they want to WRITE goes through the broker at the bottom.
 if ! zsh "$TRACKER" dump "$RUN_DIR" >>"$LOG" 2>&1; then
-  log "ABORT: tracker dump failed (is the CLI authenticated?)"
-  notify "Paper cuts: run aborted" "tracker dump failed — is the CLI still authenticated?"
-  exit 1
+  abort "tracker dump failed — is the CLI still authenticated? ('acli jira auth status')"
 fi
 
 eligible_count=$(wc -l <"$RUN_DIR/eligible.txt" | tr -d ' ')
@@ -213,7 +241,7 @@ fi
 # --------------------------------------------------------------------------
 # Materialise the prompt and the sandbox settings for this run
 # --------------------------------------------------------------------------
-"$HARNESS_DIR/bin/render.sh" "$CONFIG" "$RUN_DIR" >>"$LOG" 2>&1 || { log "ABORT: could not render prompt/settings"; notify "Paper cuts: run aborted" "could not render prompt/settings"; exit 1; }
+"$HARNESS_DIR/bin/render.sh" "$CONFIG" "$RUN_DIR" >>"$LOG" 2>&1 || abort "could not render prompt/settings"
 
 export TURBO_CONCURRENCY="${TURBO_CONCURRENCY:-2}"
 
@@ -231,9 +259,7 @@ if [[ "$MODE" == "--dry" ]]; then
 else
   GH_TOKEN="$(gh auth token 2>/dev/null)"
   if [[ -z "$GH_TOKEN" ]]; then
-    log "ABORT: could not read a gh token (is the login keyring unlocked?)"
-    notify "Paper cuts: run aborted" "no GitHub token — is the login keyring unlocked?"
-    exit 1
+    abort "no GitHub token — is the login keyring unlocked?"
   fi
   export GH_TOKEN
   export GIT_CONFIG_COUNT=1
@@ -317,6 +343,10 @@ elif [[ "$published" -gt 0 ]]; then
 else
   notify "Paper cuts: nothing to do" "No eligible quick win today. Run OK."
 fi
+
+# Reaching the bottom means the broker did its job, whatever the agent's exit
+# code: the streak counts aborts, not empty days.
+rm -f "$STREAK_FILE"
 
 log "=== run end (exit $agent_status) ==="
 exit $agent_status
