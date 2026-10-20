@@ -100,9 +100,14 @@ often says "actually we decided X".
 
 **Hard filters, on top of what the runner already applied:**
 
-- No work already in flight: `git ls-remote --heads origin | grep -i "<KEY>"`,
-  `gh pr list --state all --search "<KEY>"`, and no directory already at the
-  item's worktree path.
+- No work already in flight: no **open or merged** PR for the item
+  (`gh pr list --state all --search "<KEY>" --json number,state,headRefName`),
+  and no directory already at the item's worktree path. A remote branch
+  (`git ls-remote --heads origin | grep -i "<KEY>"`) counts only when it has an
+  open PR. A PR closed without merge, and the branch it leaves behind, are an
+  abandoned attempt, not work in flight: read them for context, then start a
+  fresh branch from the base — never reuse or force-push the old branch, and if
+  your branch name collides with it, change the slug.
 - **Not already handled by a previous run.** This job runs every day over the
   same backlog, so read the comments before acting: if an earlier run already
   split this item into slices, already opened a PR for it, or already explained

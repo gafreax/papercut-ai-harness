@@ -213,8 +213,13 @@ mkdir -p "$RUN_DIR/issues" "$RUN_DIR/jira-actions" "$RUN_DIR/slices" "$RUN_DIR/c
 # an otherwise finished PR at the last step. Create them here, from outside the
 # sandbox, rather than making the agents handle it.
 repo="$(cfg '.project.repo')"
-for label in $(cfg_arr '.pull_request.labels'); do
-  if ! gh label list -R "$repo" --limit 200 2>/dev/null | grep -qF "$label"; then
+# One label per line, compared by exact name: a label may contain spaces, and
+# word-splitting it once created "100" and "Papercuts" for "100 Papercuts".
+existing_labels="$(gh label list -R "$repo" --limit 500 --json name -q '.[].name' 2>>"$LOG")" \
+  || log "WARN: could not list labels on $repo — trying to create the configured ones anyway"
+cfg_arr '.pull_request.labels' | while IFS= read -r label; do
+  [[ -n "$label" ]] || continue
+  if ! grep -qxF -- "$label" <<<"$existing_labels"; then
     gh label create "$label" -R "$repo" --color D4C5F9 \
       --description "Opened by the unattended paper-cut run" >>"$LOG" 2>&1 \
       && log "created missing label: $label" \
