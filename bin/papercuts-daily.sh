@@ -291,6 +291,26 @@ else
   export GIT_CONFIG_VALUE_0='!f() { test "$1" = get && printf "username=x-access-token\npassword=%s\n" "$GH_TOKEN"; }; f'
 fi
 
+# Private package registries with short-lived tokens (a cloud artifact
+# registry, say) are logged into here, outside the sandbox, which can neither
+# read cloud credentials nor write the user .npmrc. The token is refreshed in
+# the background until the agents are done, since a run can outlive it. A
+# failed login aborts: an install that 401s inside a worktree would otherwise
+# surface only as one more failed item.
+REGISTRY_LOGIN="$(cfg '.verify.registry_login')"
+if [[ -n "$REGISTRY_LOGIN" ]]; then
+  registry_login() { ( cd "$CHECKOUT" && eval "$REGISTRY_LOGIN" ) >>"$LOG" 2>&1; }
+  registry_login || abort "registry login failed — are the cloud credentials still valid? (verify.registry_login)"
+  refresh_minutes="$(cfg '.verify.registry_login_refresh_minutes')"
+  refresh_minutes="${refresh_minutes:-45}"
+  ( while sleep $(( refresh_minutes * 60 )); do
+      registry_login || log "registry token refresh failed"
+    done ) &
+  REFRESHER_PID=$!
+  trap 'kill "$REFRESHER_PID" 2>/dev/null; rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+  log "registry login ok; refreshing every ${refresh_minutes} min"
+fi
+
 export PAPERCUTS_RUN_DIR="$RUN_DIR"
 export PAPERCUTS_WORKER_MODEL="$WORKER_MODEL"
 export PAPERCUTS_MAX_ITEMS="$MAX_ITEMS"
@@ -307,6 +327,7 @@ claude -p "$(<"$RUN_DIR/prompt.md")" \
   >>"$LOG" 2>&1
 agent_status=$?
 log "agent run finished (exit $agent_status)"
+[[ -n "${REFRESHER_PID:-}" ]] && kill "$REFRESHER_PID" 2>/dev/null
 
 fi  # end of the full-run block skipped by --replay-only
 

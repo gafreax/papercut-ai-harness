@@ -56,6 +56,8 @@
     "hook_probe": "test -x \"$(git config core.hooksPath)/pre-push\"",
     "env_sync": "~/Workspace/sync-envs.sh {project} {worktree}",
     "$env_sync": "Optional. Runs before install when the project needs gitignored .env files a fresh worktree does not have. Set to null if it does not.",
+    "registry_login": null,
+    "$registry_login": "Optional. A shell command the runner (outside the sandbox) runs in the checkout before the agents start, and again every registry_login_refresh_minutes (default 45) until they finish: for private registries whose tokens expire within a run. A failure aborts the run. Remember to add the registry host to sandbox.allowed_domains.",
     "checks": [
       "pnpm knip",
       "pnpm gen",
