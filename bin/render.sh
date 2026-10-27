@@ -80,6 +80,13 @@ jq -n \
 
   ($cfg.sandbox.workspace_root | expand) as $ws
   | {
+      # The sandbox only lets traffic out through its own proxy, advertised in
+      # HTTP(S)_PROXY. Node ignores those variables unless told otherwise, so a
+      # Node fetch (graphql-codegen in a pre-push hook) resolves the host
+      # itself and fails with ENOTFOUND even for an allowed domain.
+      env: {
+        NODE_USE_ENV_PROXY: "1"
+      },
       permissions: {
         defaultMode: "acceptEdits",
         additionalDirectories: [$ws],
