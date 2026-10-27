@@ -82,9 +82,20 @@ PARKED_FILE="$STATE_DIR/parked.tsv"
 # A run that fails at 06:00 and says nothing is indistinguishable from a run
 # that never happened — which is how three days of blocked work went unnoticed.
 # Every run ends with a notification, success or not.
+#
+# A banner is gone in seconds, so the notification is also appended to a plain
+# file (notify.journal): one place to look at, on any OS, that still says what
+# happened hours later. A missing file for today means the job never ran.
 notify() {
   local title="$1" body="$2"
   [[ "$(cfg '.notify.enabled')" == "true" ]] || return 0
+  local journal="$(cfg '.notify.journal')"
+  if [[ -n "$journal" ]]; then
+    journal="$(expand "${journal//\{date\}/$TODAY}")"
+    mkdir -p "${journal:h}" \
+      && print -r -- "- $(date +%H:%M) **$title** — $body (log: \`$LOG\`)" >>"$journal" \
+      || log "could not write the notification journal $journal"
+  fi
   local custom="$(cfg '.notify.command')"
   if [[ -n "$custom" ]]; then
     PC_TITLE="$title" PC_BODY="$body" sh -c "$custom" >>"$LOG" 2>&1
@@ -93,6 +104,8 @@ notify() {
     # the whole notification.
     local t="${title//\"/\\\"}" b="${body//\"/\\\"}"
     osascript -e "display notification \"$b\" with title \"$t\"" >>"$LOG" 2>&1
+  elif command -v notify-send >/dev/null; then
+    notify-send "$title" "$body" >>"$LOG" 2>&1
   fi
 }
 
@@ -353,6 +366,9 @@ fi
 # Worktrees holding commits that never reached the remote. This is the state the
 # job sat in for three days without telling anyone: work done, nothing shipped.
 typeset -a pending unknown
+# Oldest commit still waiting to be pushed. "2 branches to publish" reads the
+# same on day one and on day four, so the age goes into the notification.
+pending_since=""
 wt_glob="$(expand "$(cfg '.project.worktree_pattern')")"
 wt_glob="${wt_glob//\{project\}/$PROJECT_NAME}"
 wt_glob="${wt_glob//\{key\}/*}"
@@ -371,7 +387,12 @@ for d in ${~wt_glob}; do
   [[ -n "$branch" ]] || continue
   [[ "$branch" =~ $branch_re ]] || continue
   case "$(branch_publication_state "$d" "$branch" "$PC_REPO" "$(cfg '.project.base_branch')")" in
-    pending) pending+=("$branch") ;;
+    pending)
+      pending+=("$branch")
+      committed="$(git -C "$d" log -1 --format=%cs 2>/dev/null)"
+      [[ -n "$committed" && ( -z "$pending_since" || "$committed" < "$pending_since" ) ]] \
+        && pending_since="$committed"
+      ;;
     unknown) unknown+=("$branch") ;;
   esac
 done
@@ -391,7 +412,7 @@ unverified_note=""
 if [[ $agent_status -ne 0 ]]; then
   notify "Paper cuts: run failed" "exit $agent_status. See $LOG.$unverified_note"
 elif [[ ${#pending} -gt 0 ]]; then
-  notify "Paper cuts: ${#pending} branch(es) to publish" \
+  notify "Paper cuts: ${#pending} branch(es) to publish, waiting since ${pending_since:-$TODAY}" \
          "${pending[*]} — committed but not pushed. $published PR opened.$unverified_note"
 elif [[ ${#unknown} -gt 0 ]]; then
   notify "Paper cuts: ${#unknown} branch(es) not verified" \

@@ -118,7 +118,9 @@
   },
   "notify": {
     "enabled": true,
+    "journal": "~/papercuts-journal/{date}.md",
+    "$journal": "Markdown file every notification is appended to, so it outlasts the banner; {date} becomes YYYY-MM-DD and ~ is expanded. One file per day if the path has {date}. Null disables it.",
     "command": null,
-    "$command": "Shell command receiving $PC_TITLE and $PC_BODY. Null uses the platform default (osascript on macOS). Set to a custom command to route elsewhere."
+    "$command": "Shell command receiving $PC_TITLE and $PC_BODY. Null uses the platform default: osascript on macOS, notify-send on Linux when installed. Set to a custom command to route elsewhere."
   }
 }
