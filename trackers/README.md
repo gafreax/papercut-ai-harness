@@ -86,10 +86,17 @@ as an uninstalled git hook — it looks exactly like success.
 {"action":"transition","key":"ABC-1","status":"In Progress"}
 {"action":"transition","key":"ABC-1","status":"In Review","pr":"https://github.com/my-org/my-app/pull/42"}
 {"action":"create-slice","title":"...","body_file":"<abs path>","mode":"afk|hitl","relates_to":"ABC-1"}
+{"action":"ask","key":"ABC-1","questions":["Which tables are in scope?","Should the header stick to the page or to the table?"]}
 ```
 
 `create-slice` is how an agent says "this is too big, here are the pieces". The
 adapter creates each piece under the configured scope and links it back.
+
+`ask` is how an agent says "a human has to decide this first". The adapter
+posts the questions as one comment that mentions the owner and, when it is
+someone else, the reporter, then adds the first `exclude_labels` entry (the
+`hitl` label) so later runs skip the item until a human removes it. Mentions
+need the owner's account id: `tracker.owner.tracker_account_id` in Jira.
 
 ## Status
 

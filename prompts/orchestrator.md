@@ -37,6 +37,7 @@ never shared between agents, or appends interleave:
 {"action":"transition","key":"<KEY>","status":"{{IN_PROGRESS}}"}
 {"action":"transition","key":"<KEY>","status":"{{IN_REVIEW}}","pr":"<the PR url>"}
 {"action":"create-slice","title":"...","body_file":"<abs path>","mode":"afk","relates_to":"<KEY>"}
+{"action":"ask","key":"<KEY>","questions":["<question 1>","<question 2>"]}
 ```
 
 Write comment and slice bodies as markdown files under `$PAPERCUTS_RUN_DIR/`
@@ -44,6 +45,19 @@ Write comment and slice bodies as markdown files under `$PAPERCUTS_RUN_DIR/`
 always means the configured owner. Results land in
 `$PAPERCUTS_RUN_DIR/jira-actions.log` *after* you exit, so you will not see
 them: write carefully and say in your report what you queued.
+
+**`ask` is how a human decision gets unblocked.** Queue it on every item you
+drop because only a person can decide something — scope, a UX or design
+choice, which places are in, what "done" means — instead of a `comment`. Give
+1 to 5 questions, each answerable in a line or two and carrying the finding
+that prompted it ("The shared table has no max height, so a sticky header
+never sticks: should the table scroll internally, or the header stick to the
+page?"), not "please clarify". The broker posts them as one comment that
+mentions the owner and, when it is someone else, the reporter, and adds the
+`hitl` label, so later runs skip the item until a human answers and removes
+it. Never `ask` an item whose comments already hold unanswered questions from
+an earlier run. An item dropped for any other reason (already in flight, too
+large but clear enough to split) still gets a `comment` or `create-slice`.
 
 ### Which status to queue — decide by what exists, not by how it feels
 
@@ -142,8 +156,9 @@ run: it does not exist yet, so it is not in `eligible.txt`.
 
 **Cap.** At most {{MAX_ITEMS}} per run, fewer is expected. If two candidates
 touch the same files, keep one — parallel agents must not collide. Zero is a
-valid outcome: queue a `comment` on the item you came closest to taking,
-explaining why it was not eligible, then go to Phase 3.
+valid outcome: queue an `ask` on every item blocked on a human decision, and
+a `comment` on the item you came closest to taking if that one is blocked for
+another reason, then go to Phase 3.
 
 ## Phase 2 — delegate
 

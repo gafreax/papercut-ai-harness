@@ -25,7 +25,9 @@
       "$comment": "Who the work is for. Used to filter eligible items and to assign.",
       "tracker_user": "your.name",
       "tracker_email": "your.name@example.com",
-      "github_user": "your-github-handle"
+      "github_user": "your-github-handle",
+      "tracker_account_id": "000000:00000000-0000-0000-0000-000000000000",
+      "$tracker_account_id": "Jira only, needed by the ask action to mention you. Your Atlassian account id (profile URL, or acli jira workitem view on an issue assigned to you)."
     },
     "exclude_labels": [
       "hitl"

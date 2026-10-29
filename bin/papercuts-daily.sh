@@ -179,6 +179,8 @@ export PC_TRACKER_PARENT="$(cfg '.tracker.scope.parent')"
 export PC_TRACKER_LABEL="$(cfg '.tracker.scope.label')"
 export PC_TRACKER_USER="$(cfg '.tracker.owner.tracker_user')"
 export PC_TRACKER_EMAIL="$(cfg '.tracker.owner.tracker_email')"
+# Needed only by `ask`: a mention is addressed by account id, not by name.
+export PC_TRACKER_ACCOUNT_ID="$(cfg '.tracker.owner.tracker_account_id')"
 export PC_EXCLUDE_LABELS="$(cfg_arr '.tracker.exclude_labels' | tr '\n' ' ')"
 # The only two statuses the broker may move an item to. `in_progress_status` is
 # the older single-status spelling, still honoured so an existing config works.

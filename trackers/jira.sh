@@ -9,7 +9,7 @@
 # Invoked as: jira.sh dump <run_dir> | jira.sh replay <run_dir>
 # Configuration arrives through the environment, exported by bin/papercuts-daily.sh:
 #   PC_TRACKER_PARENT, PC_TRACKER_LABEL, PC_TRACKER_USER, PC_TRACKER_EMAIL,
-#   PC_EXCLUDE_LABELS (space separated), PC_STATUS_IN_PROGRESS,
+#   PC_TRACKER_ACCOUNT_ID, PC_EXCLUDE_LABELS (space separated), PC_STATUS_IN_PROGRESS,
 #   PC_STATUS_IN_REVIEW, PC_REPO, PC_CHECKOUT
 
 set -uo pipefail
@@ -105,6 +105,14 @@ is_eligible() { grep -qxF "$1" "$run_dir/eligible.txt"; }
 item_status()   { acli jira workitem view "$1" --fields status   --json 2>/dev/null | jq -r '.fields.status.name // empty'; }
 item_assignee() { acli jira workitem view "$1" --fields assignee --json 2>/dev/null | jq -r '.fields.assignee.emailAddress // .fields.assignee.displayName // empty'; }
 comment_count() { acli jira workitem view "$1" --fields comment  --json 2>/dev/null | jq -r '.fields.comment.comments | length' 2>/dev/null; }
+item_labels()   { acli jira workitem view "$1" --fields labels   --json 2>/dev/null | jq -r '.fields.labels[]?'; }
+# The newest comment as "<id> <space-separated mentioned account ids>". acli's
+# `comment list` flattens bodies to text and drops mentions, so read the raw
+# ADF through `view`.
+last_comment_mentions() {
+  acli jira workitem view "$1" --fields comment --json 2>/dev/null \
+    | jq -r '.fields.comment.comments[-1] // empty | "\(.id) \([.body | .. | objects | select(.type == "mention") | .attrs.id] | join(" "))"'
+}
 
 dry() { [[ "${PAPERCUTS_DRY_JIRA:-0}" == "1" ]]; }
 
@@ -151,6 +159,76 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
           else
             jlog "FAIL comment $key (comment count stayed at ${before:-unknown} — nothing was posted)"
           fi
+        fi
+        ;;
+
+      ask)
+        # Questions only a human can answer before an agent can take the item.
+        # One comment that mentions the owner — and the reporter, when that is
+        # someone else — then the hitl label, so the next runs leave the item
+        # alone until a human answers and removes it. Without the label the
+        # run would re-judge it every morning and ask again.
+        is_eligible "$key" || { jlog "REJECT ask: $key not eligible"; continue; }
+        if ! jq -e '(.questions | type == "array" and length >= 1 and length <= 5)
+                    and all(.questions[]; type == "string" and length > 0 and length <= 800)' \
+               <<<"$line" >/dev/null 2>&1; then
+          jlog "REJECT ask on $key: questions must be 1 to 5 non-empty strings"; continue
+        fi
+        exclude=(${=PC_EXCLUDE_LABELS:-})
+        hitl_label="${exclude[1]:-}"
+        if [[ -z "$hitl_label" ]]; then
+          jlog "REJECT ask on $key: no exclude label configured, so nothing would stop the next run from asking again"; continue
+        fi
+        if [[ -z "${PC_TRACKER_ACCOUNT_ID:-}" ]]; then
+          jlog "REJECT ask on $key: tracker.owner.tracker_account_id is not set, so the owner cannot be mentioned"; continue
+        fi
+
+        reporter=$(acli jira workitem view "$key" --fields reporter --json 2>/dev/null \
+                     | jq -c '.fields.reporter // empty | {id: .accountId, name: .displayName}')
+        mentions=$(jq -nc --arg id "$PC_TRACKER_ACCOUNT_ID" --arg name "$PC_TRACKER_USER" \
+                     --argjson rep "${reporter:-null}" \
+                     '[{id: $id, name: $name}] + (if $rep and $rep.id != $id then [$rep] else [] end)')
+        mkdir -p "$run_dir/asks"
+        body_file="$run_dir/asks/$key.adf.json"
+        jq -c --argjson m "$mentions" --arg label "$hitl_label" '
+          def t: {type: "text", text: .};
+          {type: "doc", version: 1, content: [
+            {type: "paragraph", content:
+              ([$m[] | ({type: "mention", attrs: {id: .id, text: "@\(.name)"}}, (" " | t))]
+               + [("questions before an agent can pick this up. Labelled \($label), so the daily paper-cut run skips it until they are answered:" | t)])},
+            {type: "orderedList", content:
+              [.questions[] | {type: "listItem", content: [{type: "paragraph", content: [(. | t)]}]}]},
+            {type: "paragraph", content: [("Once answered, remove the \($label) label: the next run will pick it up or split it into smaller tickets." | t)]}
+          ]}' <<<"$line" >"$body_file"
+
+        if dry; then
+          jlog "DRY: ask $key — comment mentioning $(jq -r 'map(.name) | join(", ")' <<<"$mentions"), then label $hitl_label"
+          continue
+        fi
+
+        before=$(comment_count "$key")
+        acli jira workitem comment create --key "$key" --body-file "$body_file" >/dev/null 2>&1
+        after=$(comment_count "$key")
+        if ! [[ -n "$before" && -n "$after" && "$after" -gt "$before" ]]; then
+          jlog "FAIL ask $key (comment count stayed at ${before:-unknown} — nothing was posted)"; continue
+        fi
+        # A posted comment is not enough: if acli took the file for plain text,
+        # the ticket now shows raw JSON and nobody was notified. Check that
+        # every mention landed, and take the comment back if not.
+        read -r cid got <<<"$(last_comment_mentions "$key")"
+        missing=$(jq -r --arg got "${got:-}" '[.[].id] - ($got | split(" ")) | length' <<<"$mentions")
+        if [[ "$missing" != "0" ]]; then
+          acli jira workitem comment delete --key "$key" --id "$cid" >/dev/null 2>&1
+          jlog "FAIL ask $key (comment $cid lacked $missing mention(s); deleted it)"; continue
+        fi
+        jlog "OK ask $key (comment $cid mentions $(jq -r 'map(.name) | join(", ")' <<<"$mentions"))"
+        commented[$key]=1
+
+        thomctl issue label add "$key" "$hitl_label" >/dev/null 2>&1
+        if item_labels "$key" | grep -qxF "$hitl_label"; then
+          jlog "OK label $key +$hitl_label"
+        else
+          jlog "FAIL label $key +$hitl_label (the questions are posted, but the next run will judge it again)"
         fi
         ;;
 

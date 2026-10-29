@@ -86,6 +86,7 @@ as an uninstalled git hook — it looks exactly like success.
 {"action":"transition","key":"ABC-1","status":"In Progress"}
 {"action":"transition","key":"ABC-1","status":"In Review","pr":"https://github.com/my-org/my-app/pull/42"}
 {"action":"create-slice","title":"...","body_file":"<abs path>","mode":"afk|hitl","relates_to":"ABC-1"}
+{"action":"ask","key":"ABC-1","questions":["Which tables are in scope?","Should the header stick to the page or to the table?"]}
 ```
 
 `create-slice` is how an agent says "this is too big, here are the pieces". The
