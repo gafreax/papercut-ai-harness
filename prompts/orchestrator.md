@@ -181,8 +181,11 @@ packages involved, whether this is a rehearsal, and the instructions below
 - **Environment files are gitignored, so a fresh worktree has none. Never
   hand-copy them between worktrees — that causes silent drift:**
   `{{ENV_SYNC}}`
-- `{{INSTALL_CMD}}` inside the worktree, and stay inside it for everything.
-  Use that command **as written**: if it disables the hook installer, that is
+- `cd` into the worktree, then run `{{INSTALL_CMD}}` there, and stay inside
+  it for everything. Use that command **as written** — not through
+  `pnpm --dir`, `-C` or a compound one-liner: the run's permissions allow the
+  verify commands by their exact text, and any other spelling is refused
+  with nobody there to approve it. If it disables the hook installer, that is
   deliberate — the installer rewrites `core.hooksPath` in the *shared*
   `.git/config` to a relative path, which silently disables hooks in every
   worktree. The runner already pinned it correctly before you started.
@@ -265,6 +268,16 @@ Write `$PAPERCUTS_RUN_DIR/report.md` and print the same content:
 - Splits queued: parent item and slice titles (keys do not exist yet).
 - Worktrees left behind and why.
 - Anything a reviewer should look at closely.
+
+**Environment blockers.** If any worker stopped because the *run environment*
+refused something — a permission denial, a sandbox write or network refusal,
+a missing tool, an expired login — and not because of the ticket, also write
+one line per blocker to `$PAPERCUTS_RUN_DIR/blocked.txt`: the item key, the
+exact command, and the exact message. The runner reads that file to report
+the day as blocked instead of "nothing to do", and counts it with the aborts:
+the same blocker will stop every run until someone fixes it. Do not write the
+file for ticket problems (unclear scope, failing tests you could not fix):
+those belong in the report and in a tracker `ask` or `comment`.
 
 **Worktree cleanup.** A worktree whose branch is pushed with an open PR stays.
 One with no commits at all: `git -C {{CHECKOUT}} worktree remove <path>`.

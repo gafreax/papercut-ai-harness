@@ -10,3 +10,6 @@ config/config.json
 # Unpublished blog draft. It is written in the first person about one specific
 # workplace, so it stays out of the repo until it is published somewhere.
 100paper-ai-harnes-blog.md
+
+# Git worktrees for parallel work on this repo.
+/.worktrees/

@@ -11,7 +11,8 @@ exactly what that run was allowed to do.
 {
   "permissions": {
     "defaultMode": "acceptEdits",        // never bypassPermissions
-    "additionalDirectories": ["<workspace_root>"]
+    "additionalDirectories": ["<workspace_root>"],
+    "allow": ["Bash(<each verify command>:*)", ...]
   },
   "sandbox": {
     "enabled": true,
@@ -37,6 +38,18 @@ checks and code host are reachable without Go CLIs, set it to `false`.
 **`autoAllowBashIfSandboxed`** — sandboxed commands run without prompting. This
 is what makes headless operation possible at all; the safety comes from the
 sandbox around those commands, not from a human approving each one.
+It does not cover everything, though: headless Claude Code still asked
+approval for `HUSKY=0 pnpm install --frozen-lockfile`, and with nobody to
+answer, the call was refused. So `permissions.allow` names every `verify`
+command from `config.json` (install, hook install, hook probe, checks), with
+and without its leading `VAR=value` assignments. The prompt tells workers to
+run them as written, from inside the worktree: `pnpm --dir …` or `-C` would
+not match the rule.
+
+When a worker is stopped by the environment anyway, the agent writes
+`<run_dir>/blocked.txt`. The runner then logs `BLOCKED:`, notifies "blocked by
+the environment" instead of "nothing to do", and counts the run in the abort
+streak.
 
 ## Getting the allowlist right
 

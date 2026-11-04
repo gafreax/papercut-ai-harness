@@ -90,6 +90,22 @@ jq -n \
       permissions: {
         defaultMode: "acceptEdits",
         additionalDirectories: [$ws],
+        # autoAllowBashIfSandboxed is not enough on its own: headless Claude
+        # Code still asks approval for some sandboxed commands (on 2026-11-04
+        # `HUSKY=0 pnpm install --frozen-lockfile` got "This command requires
+        # approval"), and with nobody to answer, the worker stops before it
+        # can write a line. So every verify command the prompt hands the
+        # worker is allowed by name, with and without its leading VAR=value
+        # assignments. The sandbox still confines what they can write and
+        # reach.
+        allow: (
+          [$cfg.verify.install, $cfg.verify.hook_install, $cfg.verify.hook_probe]
+          + ($cfg.verify.checks // [])
+          | map(select(. != null and . != ""))
+          | map(., sub("^([A-Za-z_][A-Za-z0-9_]*=[^ ]* +)+"; ""))
+          | unique
+          | map("Bash(" + . + ":*)")
+        ),
         # Absolute-path rules take a leading "//" and the expanded path already
         # starts with "/", so concatenate a single slash here — "///Users/..."
         # matches nothing.

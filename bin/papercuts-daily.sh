@@ -122,19 +122,27 @@ STREAK_FILE="$STATE_DIR/consecutive-aborts"
 # inside it: the file's own mtime is rewritten by every abort, so it would
 # always read as today and the streak would lose the one fact that matters —
 # how long this has been broken.
+#
+# bump_streak sets STREAK_N and STREAK_FIRST. It is shared by abort and by a
+# run the environment blocked, which the streak counts the same way: both will
+# repeat every day until someone fixes the cause.
+bump_streak() {
+  STREAK_N=0 STREAK_FIRST="$TODAY"
+  if [[ -r "$STREAK_FILE" ]]; then
+    read -r STREAK_N STREAK_FIRST <"$STREAK_FILE"
+    [[ -n "$STREAK_FIRST" ]] || STREAK_FIRST="$TODAY"
+  fi
+  (( STREAK_N = STREAK_N + 1 ))
+  print -r -- "$STREAK_N $STREAK_FIRST" >"$STREAK_FILE"
+}
+
 abort() {
   local body="$1"
-  local n=0 first="$TODAY"
-  if [[ -r "$STREAK_FILE" ]]; then
-    read -r n first <"$STREAK_FILE"
-    [[ -n "$first" ]] || first="$TODAY"
-  fi
-  (( n = n + 1 ))
-  print -r -- "$n $first" >"$STREAK_FILE"
+  bump_streak
   log "ABORT: $body"
-  if (( n > 1 )); then
-    log "       $n run consecutivi falliti, il primo il $first"
-    notify "Paper cuts: $n run falliti di fila (dal $first)" "$body"
+  if (( STREAK_N > 1 )); then
+    log "       $STREAK_N run consecutivi falliti, il primo il $STREAK_FIRST"
+    notify "Paper cuts: $STREAK_N run falliti di fila (dal $STREAK_FIRST)" "$body"
   else
     notify "Paper cuts: run aborted" "$body"
   fi
@@ -411,8 +419,24 @@ log "outcome — $summary"
 unverified_note=""
 [[ ${#unknown} -gt 0 ]] && unverified_note=" Could not check with GitHub: ${unknown[*]}."
 
+# The agent writes blocked.txt when the run environment, not the ticket, stopped
+# a worker (permission denied, sandbox refusal, expired login). Without it, a
+# run that never got to write code ended the day as "nothing to do — Run OK",
+# as it did on 2026-11-04 when pnpm install was refused.
+blocked_file="$RUN_DIR/blocked.txt"
+blocked=""
+[[ -s "$blocked_file" ]] && blocked="$(tr '\n' ' ' <"$blocked_file")"
+if [[ -n "$blocked" ]]; then
+  bump_streak
+  log "BLOCKED: $blocked"
+  (( STREAK_N > 1 )) && log "         $STREAK_N run consecutivi falliti, il primo il $STREAK_FIRST"
+fi
+
 if [[ $agent_status -ne 0 ]]; then
   notify "Paper cuts: run failed" "exit $agent_status. See $LOG.$unverified_note"
+elif [[ -n "$blocked" && "$published" -eq 0 ]]; then
+  notify "Paper cuts: blocked by the environment ($STREAK_N run di fila, dal $STREAK_FIRST)" \
+         "$blocked See $RUN_DIR/report.md.$unverified_note"
 elif [[ ${#pending} -gt 0 ]]; then
   notify "Paper cuts: ${#pending} branch(es) to publish, waiting since ${pending_since:-$TODAY}" \
          "${pending[*]} — committed but not pushed. $published PR opened.$unverified_note"
@@ -426,8 +450,8 @@ else
 fi
 
 # Reaching the bottom means the broker did its job, whatever the agent's exit
-# code: the streak counts aborts, not empty days.
-rm -f "$STREAK_FILE"
+# code: the streak counts aborts and blocked runs, not empty days.
+[[ -z "$blocked" ]] && rm -f "$STREAK_FILE"
 
 log "=== run end (exit $agent_status) ==="
 exit $agent_status
