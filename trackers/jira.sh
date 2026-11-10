@@ -30,6 +30,35 @@ jlog() { print -r -- "[$(date +%H:%M:%S)] $*" | tee -a "$run_dir/jira-actions.lo
 # own writes. Compared as a string, so it must never be reformatted.
 item_updated() { acli jira workitem view "$1" --fields updated --json 2>/dev/null | jq -r '.fields.updated // empty'; }
 
+# The item's comments as [{author, created, body}], oldest first, with the
+# body flattened from Atlassian Document Format to plain text. thomctl's view
+# has no comments and `acli … comment list` drops list items from the body,
+# which is exactly where the questions of an `ask` live — so read the raw ADF
+# and keep lists as "- " / "1. " lines. Without this an agent never sees the
+# answers a human wrote, and re-asks or re-parks the item.
+ADF_TO_TEXT='
+  def adf:
+    if type == "array" then map(adf) | join("")
+    elif type != "object" then ""
+    elif .type == "text" then .text
+    elif .type == "mention" then (.attrs.text // "@someone")
+    elif .type == "hardBreak" then "\n"
+    elif .type == "inlineCard" then (.attrs.url // "")
+    elif .type == "codeBlock" then "```\n" + ((.content // []) | adf) + "\n```\n"
+    elif .type == "bulletList" then ((.content // []) | map("- " + ((.content // []) | adf | rtrimstr("\n"))) | join("\n")) + "\n"
+    elif .type == "orderedList" then ((.content // []) | to_entries | map("\(.key + 1). " + ((.value.content // []) | adf | rtrimstr("\n"))) | join("\n")) + "\n"
+    elif .type == "paragraph" or .type == "heading" then ((.content // []) | adf) + "\n"
+    else (.content // []) | adf
+    end;'
+item_comments() {
+  acli jira workitem view "$1" --fields comment --json 2>/dev/null | jq -c "$ADF_TO_TEXT"'
+    [.fields.comment.comments[]? | {
+      author: (.author.displayName // .author.emailAddress // "unknown"),
+      created,
+      body: (.body | if type == "string" then . else adf | rtrimstr("\n") end)
+    }]'
+}
+
 # --------------------------------------------------------------------------
 # dump
 # --------------------------------------------------------------------------
@@ -69,6 +98,16 @@ if [[ "$verb" == "dump" ]]; then
     [[ -z "$key" ]] && continue
     thomctl issue view "$key" --json >"$run_dir/issues/$key.json" 2>/dev/null \
       || print -r -- "jira.sh: could not dump $key" >&2
+    # The contract promises description *and* comments. A missing comment
+    # dump is not "no comments": abort, or the agent re-asks answered items.
+    comments=$(item_comments "$key")
+    if [[ -z "$comments" ]] || ! jq -e 'type == "array"' <<<"$comments" >/dev/null 2>&1; then
+      print -r -- "jira.sh: could not read the comments of $key" >&2
+      exit 1
+    fi
+    jq --argjson c "$comments" '. + {comments: $c}' "$run_dir/issues/$key.json" >"$run_dir/issues/$key.json.tmp" \
+      && mv "$run_dir/issues/$key.json.tmp" "$run_dir/issues/$key.json" \
+      || { print -r -- "jira.sh: could not add the comments to $key" >&2; exit 1; }
     upd=$(item_updated "$key")
     if [[ -n "$upd" ]]; then
       print -r -- "$key"$'\t'"$upd" >>"$run_dir/updated.tsv"
