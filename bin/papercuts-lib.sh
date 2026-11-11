@@ -41,6 +41,18 @@ branch_publication_state() {
   ahead=$(git -C "$dir" rev-list --count "origin/$base..HEAD" 2>/dev/null || print 0)
   (( ahead > 0 )) || { print clean; return 0; }
 
+  # The same change may already be on the base under another SHA: the PR was
+  # rebased or amended on the remote after this worktree committed, then
+  # squash-merged. Its HEAD is then not among the PR's commits, and the check
+  # below would call it pending forever (EXP-1742, 2026-11-11). `git cherry`
+  # compares patch content, not SHAs: no "+" line means every local commit
+  # has an equivalent on the base.
+  if ! git -C "$dir" cherry "origin/$base" HEAD 2>/dev/null | grep -q '^+'; then
+    log "not pending: $branch is $ahead commit(s) ahead of origin/$base by SHA, but every patch is already on origin/$base"
+    print landed
+    return 0
+  fi
+
   head=$(git -C "$dir" rev-parse HEAD 2>/dev/null)
   # stderr kept apart from the JSON: gh prints notices there ("a new release is
   # available") even when it succeeds, and mixed in they would break the parse.

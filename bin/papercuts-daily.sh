@@ -367,10 +367,19 @@ park_record "$RUN_DIR/parked.tsv" "$PARKED_FILE" "$TODAY"
 # --------------------------------------------------------------------------
 # Outcome: what got out, and what is stuck
 # --------------------------------------------------------------------------
+# Only branches this job would have created. The worktree glob below also
+# matches the human's own worktrees, and the remote gets everyone's branches:
+# counting all new remote heads reported "6 PR opened" on 2026-11-10 when the
+# job had opened none of them.
+branch_re="^$(cfg '.project.branch_pattern')"
+branch_re="${branch_re//\{key\}/[A-Z]+-[0-9]+}"
+branch_re="${branch_re//\{slug\}/.+}"
+
 published=0
 if [[ -f "$RUN_DIR/refs-before.txt" ]]; then
   git ls-remote --heads origin 2>/dev/null | awk '{print $2}' | sort >"$RUN_DIR/refs-after.txt"
-  published=$(comm -13 "$RUN_DIR/refs-before.txt" "$RUN_DIR/refs-after.txt" | wc -l | tr -d ' ')
+  published=$(comm -13 "$RUN_DIR/refs-before.txt" "$RUN_DIR/refs-after.txt" \
+    | sed 's#^refs/heads/##' | grep -cE "$branch_re")
 fi
 
 # Worktrees holding commits that never reached the remote. This is the state the
@@ -383,13 +392,9 @@ wt_glob="$(expand "$(cfg '.project.worktree_pattern')")"
 wt_glob="${wt_glob//\{project\}/$PROJECT_NAME}"
 wt_glob="${wt_glob//\{key\}/*}"
 setopt NULL_GLOB
-# Only branches this job would have created. The worktree glob also matches the
-# human's own worktrees next to them, and reporting their unpushed work as "the
-# job has something to publish" would make the notification untrustworthy — the
+# branch_re (above) again: reporting the human's own unpushed work as "the job
+# has something to publish" would make the notification untrustworthy — the
 # one thing it cannot afford to be.
-branch_re="^$(cfg '.project.branch_pattern')"
-branch_re="${branch_re//\{key\}/[A-Z]+-[0-9]+}"
-branch_re="${branch_re//\{slug\}/.+}"
 
 for d in ${~wt_glob}; do
   [[ -e "$d/.git" ]] || continue

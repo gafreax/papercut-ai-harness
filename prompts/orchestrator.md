@@ -99,9 +99,12 @@ brief must state whether this is a rehearsal.
 ## Phase 0 — preflight
 
 1. `cd {{CHECKOUT}} && git fetch origin --prune`
-2. Read `$PAPERCUTS_RUN_DIR/eligible.txt` and `candidates.json`. Empty list →
+2. Read `$PAPERCUTS_RUN_DIR/eligible.txt` and `candidates.json`.
+3. List the branches earlier runs left committed but unpublished (see
+   Phase 3 for how to recognise them). They are published in Phase 3, not
+   re-selected in Phase 1. Empty eligible list **and** no such branch →
    nothing to do: say so and stop.
-3. Read the project's conventions before judging anything: root `CLAUDE.md` /
+4. Read the project's conventions before judging anything: root `CLAUDE.md` /
    `AGENTS.md`, any `CONTEXT-MAP.md`, the per-package `CONTEXT.md`, and
    `.agent/rules/*.md` if present. You cannot tell a quick win from a trap
    without knowing the rules the fix has to respect.
@@ -210,33 +213,23 @@ packages involved, whether this is a rehearsal, and the instructions below
 - Conventional commits with a scope the commit linter accepts. If no valid
   scope fits what you changed, that is a defect in the linter config worth its
   own commit — do not mislabel the change to get past it.
-- **Before pushing, make sure you are not behind `{{BASE_BRANCH}}`:**
-  `git fetch origin && git rebase origin/{{BASE_BRANCH}}`.
-  If any check regenerates code from a live source (a schema fetched over the
-  network, say), a branch cut hours ago is broken *by construction*: the
-  generated output matches today's source while the committed code matches
-  yesterday's, and the failure looks like your fault. If the rebase conflicts,
-  stop and report — do not resolve conflicts in someone else's work.
-- **Push with the hooks ON: `git push -u origin <branch>`. Never
-  `--no-verify`, not on push and not on commit.** Then confirm the checks
-  actually ran: a push that returns instantly did not run them.
-- Generated-file drift gets its **own** commit, never folded into the
-  functional one: `{{DRIFT_COMMIT}}`.
-- If a check fails for a reason unrelated to your change: **stop**. Do not fix
-  it broadly to get green. Leave the worktree and report what failed.
-- Open the PR: `gh pr create --base {{BASE_BRANCH}} --assignee {{GITHUB_USER}}`.
-  Labels: {{PR_LABELS}}. No reviewers, no auto-merge — a human reviews and
-  merges. Body, in English, reviewer-oriented: **Ticket** link, **Problem**,
-  **Fix** (and why this approach over the obvious alternative), **Tests** (what
-  you added and how to run it), **Not verified** (anything you could not check).
-- Tracker: **do not call its CLI** — it cannot authenticate here. Queue
-  `comment` (with the PR link), `assign` and `transition` in
-  `$PAPERCUTS_RUN_DIR/jira-actions/<KEY>.jsonl`, for your item only, choosing
-  the status from the table above: `{{IN_REVIEW}}` with the PR URL you actually
-  got back from `gh pr create`, or `{{IN_PROGRESS}}` if the work is committed
-  but the push did not happen. Never both.
-- If you cannot finish: push nothing, keep the worktree, report precisely where
-  you stopped and why. An honest stop is a useful result.
+- Before committing, run `pnpm typecheck` and the tests of the package you
+  touched (from that package's directory: `pnpm test`), and fix what *your*
+  change broke. Never `--no-verify` on commit.
+- **Do not push and do not open the PR.** The orchestrator publishes every
+  item one at a time once all workers are done: the pre-push hook runs the
+  whole test suite, and several of them running at once on one machine is
+  what made unrelated tests time out on 2026-11-11.
+- Instead, write the PR to `$PAPERCUTS_RUN_DIR/pr-bodies/<KEY>.md`: the first
+  line is the PR title (a conventional commit subject ending in `(<KEY>)`),
+  then a blank line, then the body, in English, reviewer-oriented: **Ticket**
+  link, **Problem**, **Fix** (and why this approach over the obvious
+  alternative), **Tests** (what you added, how to run it, and whether you saw
+  it run), **Not verified** (anything you could not check).
+- Tracker: **do not call its CLI** and **queue nothing** — the orchestrator
+  queues the actions for your item once it knows whether it got published.
+- If you cannot finish: keep the worktree, write no PR file, report precisely
+  where you stopped and why. An honest stop is a useful result.
 
 ---
 
@@ -256,7 +249,64 @@ Before writing the report, verify this held: for each delegated item, check
 changed files match its scope and do not overlap between branches. Any overlap
 goes in the report, explicitly.
 
-## Phase 3 — report
+## Phase 3 — publish, one item at a time
+
+The goal of the run is a **ready-for-review pull request** — not a draft, not
+a commit waiting in a worktree. Publishing is yours, and it is serial: start
+it only when every worker has returned, and never run two pushes at once.
+
+Rehearsal (`PAPERCUTS_NO_PUBLISH=1`): skip this phase; queue `{{IN_PROGRESS}}`
+for each committed item as in the table above.
+
+**What to publish:** every item a worker finished this run, plus every branch
+an *earlier* run left committed but unpublished. Find those in Phase 0: the
+worktrees matching `{{WORKTREE_PATTERN}}` whose branch matches
+`{{BRANCH_PATTERN}}`, with no remote branch, no open PR, and at least one
+commit whose patch is not on the base yet (`git cherry origin/{{BASE_BRANCH}}
+HEAD` prints a `+` line). An earlier item has no PR file: write one from its
+commit messages and that day's report, `$PAPERCUTS_RUN_DIR/../<date>/report.md`
+(the date of its commit), saying in **Not verified** what that run could not check. Only
+publish an earlier item if its key is in `eligible.txt` — the broker rejects
+tracker actions on any other key; otherwise list it in the report and leave it.
+In Phase 1 such an item is not a candidate: its worktree already exists.
+
+For each item, in turn, inside its worktree:
+
+1. `git fetch origin && git rebase origin/{{BASE_BRANCH}}`. If any check
+   regenerates code from a live source, a branch cut hours ago is broken *by
+   construction*. If the rebase conflicts: `git rebase --abort`, stop this
+   item and report — never resolve conflicts in someone else's work.
+2. `git push -u origin <branch>` **with the hooks on**. Confirm the checks ran:
+   a push that returns instantly did not run them.
+3. If the push fails, read the hook output and classify it:
+   - **Generated-file drift**: commit it on its own, never folded into the
+     functional commit (`{{DRIFT_COMMIT}}`), and push again. This retry is free.
+   - **Lint, dead-code, codegen or type errors**: deterministic, so a retry
+     changes nothing. Stop the item and report the exact errors — you do not
+     write fixes, and a worker already ran these before committing.
+   - **Failing tests**: collect the failing test files. If any is a file this
+     branch changed, or tests what it changed, the change is broken: stop the
+     item. Otherwise re-run **each failing file on its own**, from its
+     package directory (`pnpm test <path>`). If one fails alone, it is a real
+     failure — stop the item and report it as broken on the base (it is not
+     yours to fix). If **all pass alone**, the failure came from load, not from
+     the code: push again. At most **3 push attempts** per item in total; after
+     the third, stop and report the files as flaky, with their timings.
+   - Anything else (network, sandbox refusal, expired login): stop the item and
+     write it to `blocked.txt` as described below.
+4. Once pushed, open the PR **ready for review**:
+   `gh pr create --base {{BASE_BRANCH}} --assignee {{GITHUB_USER}} --title "<first line of the PR file>" --body-file <the rest, saved to a file>`
+   Labels: {{PR_LABELS}}. **Never `--draft`**. No reviewers, no auto-merge — a
+   human reviews and merges. Then check `gh pr view <url> --json isDraft`; if it
+   says `true`, run `gh pr ready <url>`.
+5. Queue the tracker actions for the item, from the table above:
+   `comment` (with the PR link) + `assign` + `transition` → `{{IN_REVIEW}}`
+   with the URL `gh pr create` returned; or, if the item stopped before the PR,
+   `comment` (why it stopped, what is left) + `assign` + `transition` →
+   `{{IN_PROGRESS}}`. Never both. For an earlier item that already went to
+   `{{IN_PROGRESS}}`, queue only the comment and the `{{IN_REVIEW}}` transition.
+
+## Phase 4 — report
 
 Write `$PAPERCUTS_RUN_DIR/report.md` and print the same content:
 
@@ -290,6 +340,7 @@ One with no commits at all: `git -C {{CHECKOUT}} worktree remove <path>`.
 - Never queue a tracker action for an item outside `eligible.txt`.
 - Never use `--no-verify`. If the checks cannot pass, the change is not ready
   and the honest outcome is a report, not a bypass.
+- Never open a draft PR, and never run two pushes at the same time.
 - Do not start dev servers and do not touch any deployed environment.
 - Hard cap: {{MAX_ITEMS}} per run. One item → one branch → one worktree →
   one PR.
