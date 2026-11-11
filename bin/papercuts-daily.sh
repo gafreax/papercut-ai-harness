@@ -19,7 +19,8 @@
 #                  construction rather than by good behaviour — and tracker
 #                  actions are only logged
 #   --replay-only  skip dump and agents; only execute the queued actions of an
-#                  existing run dir (override with PAPERCUTS_RUN_DIR)
+#                  existing run dir (the newest one, or PAPERCUTS_RUN_DIR);
+#                  actions that already succeeded are not repeated
 #
 # Shebang is `zsh -l` on purpose: launchd starts jobs with a bare environment,
 # so the login profile is what puts node/pnpm, the tracker CLIs and gh on PATH.
@@ -68,7 +69,20 @@ LOG_DIR="$STATE_DIR/logs"
 mkdir -p "$LOG_DIR"
 TODAY="$(date +%Y-%m-%d)"
 LOG="$LOG_DIR/papercuts-$TODAY.log"
-RUN_DIR="${PAPERCUTS_RUN_DIR:-$STATE_DIR/runs/$TODAY}"
+# One directory per run, not per day. The queue, report, blocked.txt, prompt and
+# ref snapshots all live here and are written assuming nobody else has touched
+# them; on 2026-11-11 two runs shared a per-day directory and the second replay
+# re-posted the first one's comment on EXP-1843. A re-run must start empty.
+# --replay-only has no run of its own: it targets the newest existing one.
+RUN_STAMP="$(date +%Y-%m-%dT%H%M%S)"
+if [[ -n "${PAPERCUTS_RUN_DIR:-}" ]]; then
+  RUN_DIR="$PAPERCUTS_RUN_DIR"
+elif [[ "$MODE" == "--replay-only" ]]; then
+  RUN_DIR="$(setopt NULL_GLOB; print -r -- "$STATE_DIR"/runs/*(/On[1]))"
+  [[ -n "$RUN_DIR" ]] || { print -r -- "no run directory under $STATE_DIR/runs to replay" >&2; exit 1; }
+else
+  RUN_DIR="$STATE_DIR/runs/$RUN_STAMP"
+fi
 LOCK="$STATE_DIR/.lock"
 
 log() { print -r -- "[$(date +%H:%M:%S)] $*" >>"$LOG"; }

@@ -59,7 +59,12 @@ written by agents and is untrusted input:
   cheerfully resolve it back to PR 1) and confirm with the code host that the
   pull request exists;
 - assign only to `tracker.owner`;
-- reject unknown verbs.
+- reject unknown verbs;
+- be repeatable: record every action confirmed on the tracker (hash of the
+  queued line plus its body file) in `<run_dir>/jira-actions.applied` and skip
+  it on a later replay of the same directory. Failed or rejected actions are not
+  recorded, so `--replay-only` can retry them without repeating the ones that
+  landed.
 
 Log every outcome — accepted and rejected — to `<run_dir>/jira-actions.log`.
 Honour `PAPERCUTS_DRY_JIRA=1` by logging what would run instead of running it.

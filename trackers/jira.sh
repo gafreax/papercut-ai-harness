@@ -155,6 +155,27 @@ last_comment_mentions() {
 
 dry() { [[ "${PAPERCUTS_DRY_JIRA:-0}" == "1" ]]; }
 
+# ---------------------------------------------------------------------------
+# A replay must be repeatable. `--replay-only` exists to re-run the actions that
+# did not land, and a run that shares its directory with an earlier one finds
+# that run's queue still there. Either way the same line is read twice, and
+# without a record of what already succeeded it is executed twice: on
+# 2026-11-11 the morning comment on EXP-1843 was posted again by the afternoon
+# replay.
+#
+# The ledger holds one hash per action that was CONFIRMED on the tracker (never
+# a rejected or failed one, which must stay retryable). The hash covers the
+# queued line *and* the body file it points at: an agent that rewrites
+# comments/<KEY>.md and queues the same line again is asking for a new comment.
+# ---------------------------------------------------------------------------
+applied_ledger="$run_dir/jira-actions.applied"
+action_id() {
+  local body_file; body_file=$(jq -r '.body_file // empty' <<<"$1" 2>/dev/null)
+  { print -r -- "$1"; [[ -f "$body_file" ]] && cat "$body_file"; } | shasum -a 256 | cut -d' ' -f1
+}
+already_applied() { [[ -f "$applied_ledger" ]] && grep -qxF -- "$1" "$applied_ledger"; }
+mark_applied() { dry || print -r -- "$1" >>"$applied_ledger"; }
+
 run_jira() {
   if dry; then
     jlog "DRY: $*"
@@ -179,6 +200,18 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
     fi
     key=$(jq -r '.key // empty' <<<"$line")
 
+    id=$(action_id "$line")
+    if already_applied "$id"; then
+      jlog "SKIP $action $key (already applied by an earlier replay of this run)"
+      # Keep the park bookkeeping as if it had run now: a comment-only key is
+      # parked, one with an assign or transition is not.
+      case "$action" in
+        comment|ask) commented[$key]=1 ;;
+        assign|transition) worked[$key]=1 ;;
+      esac
+      continue
+    fi
+
     case "$action" in
       comment)
         body_file=$(jq -r '.body_file // empty' <<<"$line")
@@ -194,6 +227,7 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
           after=$(comment_count "$key")
           if [[ -n "$before" && -n "$after" && "$after" -gt "$before" ]]; then
             jlog "OK comment $key (comments $before -> $after)"
+            mark_applied "$id"
             commented[$key]=1
           else
             jlog "FAIL comment $key (comment count stayed at ${before:-unknown} — nothing was posted)"
@@ -262,6 +296,9 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
         fi
         jlog "OK ask $key (comment $cid mentions $(jq -r 'map(.name) | join(", ")' <<<"$mentions"))"
         commented[$key]=1
+        # Recorded before the label: a failed label must not make a retry post
+        # the questions a second time.
+        mark_applied "$id"
 
         thomctl issue label add "$key" "$hitl_label" >/dev/null 2>&1
         if item_labels "$key" | grep -qxF "$hitl_label"; then
@@ -281,6 +318,7 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
           now=$(item_assignee "$key")
           if [[ "$now" == "$PC_TRACKER_EMAIL" || "$now" == "$PC_TRACKER_USER" ]]; then
             jlog "OK assign $key -> $now"
+            mark_applied "$id"
           else
             jlog "FAIL assign $key (assignee is '${now:-none}', not $PC_TRACKER_EMAIL)"
           fi
@@ -341,6 +379,7 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
           now=$(item_status "$key")
           if [[ "$now" == "$want" ]]; then
             jlog "OK transition $key -> $want"
+            mark_applied "$id"
           else
             # Usually the workflow does not allow this jump from where the item
             # currently sits. Name both statuses: that is the whole diagnosis,
@@ -370,6 +409,7 @@ for f in "$run_dir"/jira-actions/*.jsonl; do
                 -f "$body_file" $flag --json 2>/dev/null | jq -r '.key // empty')
         if [[ -n "$new" ]]; then
           jlog "OK create-slice $new ($title)"
+          mark_applied "$id"
           if [[ -n "$relates" ]]; then
             thomctl issue link add "$new" --relates-to "$relates" >/dev/null 2>&1 \
               && jlog "OK link $new relates-to $relates" \

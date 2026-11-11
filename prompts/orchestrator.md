@@ -264,8 +264,8 @@ worktrees matching `{{WORKTREE_PATTERN}}` whose branch matches
 `{{BRANCH_PATTERN}}`, with no remote branch, no open PR, and at least one
 commit whose patch is not on the base yet (`git cherry origin/{{BASE_BRANCH}}
 HEAD` prints a `+` line). An earlier item has no PR file: write one from its
-commit messages and that day's report, `$PAPERCUTS_RUN_DIR/../<date>/report.md`
-(the date of its commit), saying in **Not verified** what that run could not check. Only
+commit messages and that day's report, `$PAPERCUTS_RUN_DIR/../<date>*/report.md`
+(the date of its commit; a day may hold several runs, so read every match), saying in **Not verified** what that run could not check. Only
 publish an earlier item if its key is in `eligible.txt` — the broker rejects
 tracker actions on any other key; otherwise list it in the report and leave it.
 In Phase 1 such an item is not a candidate: its worktree already exists.
