@@ -8,8 +8,15 @@ Everything written for humans — commits, PR titles and bodies, tracker comment
 — must be in **English**.
 
 Main checkout: `{{CHECKOUT}}`. Never change its branch and never commit in it:
-it is a human's working copy. You only `git fetch` there and use it as the
-source for `git worktree add`.
+it is a human's working copy. You only `git fetch` there.
+
+**Worktrees are created by the runner, not by you.** The sandbox keeps the
+repository's `.git/worktrees` read-only, except for the worktrees this session
+was started with, so `git worktree add`, `move` and `remove` fail halfway — do
+not run them. Before you started, the runner created a worktree at
+`{{WORKTREE_PATTERN}}` for every key in `eligible.txt` (unless one was already
+there), detached at `origin/{{BASE_BRANCH}}`, and the worker creates its branch
+inside it. The runner removes the unused ones after the run.
 
 ## How the tracker works in this run — read this first
 
@@ -119,7 +126,9 @@ often says "actually we decided X".
 
 - No work already in flight: no **open or merged** PR for the item
   (`gh pr list --state all --search "<KEY>" --json number,state,headRefName`),
-  and no directory already at the item's worktree path. A remote branch
+  and no branch already checked out in the item's worktree. A worktree
+  detached at `origin/{{BASE_BRANCH}}` with no changes is the runner's empty
+  one, not work in flight. A remote branch
   (`git ls-remote --heads origin | grep -i "<KEY>"`) counts only when it has an
   open PR. A PR closed without merge, and the branch it leaves behind, are an
   abandoned attempt, not work in flight: read them for context, then start a
@@ -177,8 +186,11 @@ packages involved, whether this is a rehearsal, and the instructions below
 
 ---
 
-- **Work in a worktree, never in the main checkout:**
-  `git -C {{CHECKOUT}} worktree add {{WORKTREE_PATTERN}} -b <branch> origin/{{BASE_BRANCH}}`
+- **Work in your worktree, never in the main checkout.** The runner has
+  already created it at `{{WORKTREE_PATTERN}}`, detached at
+  `origin/{{BASE_BRANCH}}`. Do not run `git worktree add`, `move` or `remove`:
+  the sandbox refuses them. Create your branch inside it:
+  `git -C <worktree> switch -c <branch>`
   where the worktree path and branch follow `{{WORKTREE_PATTERN}}` and
   `{{BRANCH_PATTERN}}` with `{key}` and a short kebab `{slug}`.
 - **Environment files are gitignored, so a fresh worktree has none. Never
@@ -243,7 +255,7 @@ that is a signal the task is out of scope for this run: stop and report.
 
 Inside that boundary each agent stays in **its own worktree** — never reading,
 writing or running commands against another agent's worktree, and never against
-the main checkout beyond the single `git worktree add` that creates its own.
+the main checkout.
 Before writing the report, verify this held: for each delegated item, check
 `git -C <worktree> diff --stat origin/{{BASE_BRANCH}}...HEAD` and confirm the
 changed files match its scope and do not overlap between branches. Any overlap
@@ -330,7 +342,8 @@ file for ticket problems (unclear scope, failing tests you could not fix):
 those belong in the report and in a tracker `ask` or `comment`.
 
 **Worktree cleanup.** A worktree whose branch is pushed with an open PR stays.
-One with no commits at all: `git -C {{CHECKOUT}} worktree remove <path>`.
+One with no commits at all: leave it, the runner removes it after the run
+(the sandbox cannot).
 **Never** remove a worktree with unpushed commits.
 
 ## Guard rails

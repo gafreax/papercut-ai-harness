@@ -70,6 +70,22 @@ prompt-level. The orchestrator therefore has to *verify* it before reporting —
 `git diff --stat` per branch, overlaps stated explicitly. Where a guarantee
 cannot be structural, make it checkable and check it.
 
+### Worktrees are created outside the sandbox
+
+Since Claude Code 2.1.328 the sandbox keeps the repository's `.git/worktrees`
+read-only, and an explicit `allowWrite` entry does not lift it. The only
+exception is a worktree the session was started with (`--add-dir <worktree>`):
+its admin directory, `.git/worktrees/<name>/`, stays writable, so it can take a
+branch and commits. Everything else under `.git` (objects, refs, logs) is still
+writable. Verified on 2026-11-19 by probing those paths from a sandboxed
+`claude -p` with the run's own settings, with and without `--add-dir`.
+
+So the runner creates a worktree for each eligible key before the session
+starts, detached at the base branch, and passes each one with `--add-dir`. The
+worker only runs `git switch -c <branch>` inside it. The sandbox cannot remove
+a worktree either: after the session, the runner removes the ones it created
+that hold no change and no commit beyond the base.
+
 ## Credentials: the two brokered edges
 
 The sandbox blocks the macOS keyring, which is where `gh`, `git` and the tracker

@@ -348,6 +348,32 @@ if [[ -n "$REGISTRY_LOGIN" ]]; then
   log "registry login ok; refreshing every ${refresh_minutes} min"
 fi
 
+# Worktrees are created here, outside the sandbox. Since Claude Code 2.1.328 the
+# sandbox keeps the repository's .git/worktrees read-only, except for the
+# worktrees the session was started with (--add-dir). A worker that runs
+# `git worktree add` itself fails halfway, as on 2026-11-19 with EXP-1739, and
+# even a worktree that exists cannot take a commit unless it was handed over at
+# start. So every eligible key gets its worktree now, detached at the base, and
+# is passed to the session; the worker only creates its branch inside it.
+BASE_BRANCH="$(cfg '.project.base_branch')"
+wt_pattern="$(expand "$(cfg '.project.worktree_pattern')")"
+wt_pattern="${wt_pattern//\{project\}/$PROJECT_NAME}"
+typeset -a WT_ADD_DIRS PRECREATED
+while IFS= read -r key; do
+  [[ -n "$key" ]] || continue
+  wt="${wt_pattern//\{key\}/$key}"
+  if [[ ! -e "$wt" ]]; then
+    if git -C "$CHECKOUT" worktree add -q --detach "$wt" "origin/$BASE_BRANCH" >>"$LOG" 2>&1; then
+      PRECREATED+=("$wt")
+      log "worktree ready: $wt (detached at origin/$BASE_BRANCH)"
+    else
+      log "WARN: could not create worktree $wt — $key cannot be worked on this run"
+      continue
+    fi
+  fi
+  WT_ADD_DIRS+=(--add-dir "$wt")
+done <"$RUN_DIR/eligible.txt"
+
 export PAPERCUTS_RUN_DIR="$RUN_DIR"
 export PAPERCUTS_WORKER_MODEL="$WORKER_MODEL"
 export PAPERCUTS_MAX_ITEMS="$MAX_ITEMS"
@@ -361,10 +387,29 @@ claude -p "$(<"$RUN_DIR/prompt.md")" \
   --settings "$RUN_DIR/sandbox-settings.json" \
   --permission-mode acceptEdits \
   --add-dir "$WORKSPACE_ROOT" \
+  "${WT_ADD_DIRS[@]}" \
   >>"$LOG" 2>&1
 agent_status=$?
 log "agent run finished (exit $agent_status)"
 [[ -n "${REFRESHER_PID:-}" ]] && kill "$REFRESHER_PID" 2>/dev/null
+
+# The sandbox cannot remove a worktree either, so the ones created above and
+# left unused go here: no local changes and no commit beyond the base. Anything
+# else — a branch with commits, uncommitted work — is the worker's and stays.
+for wt in "${PRECREATED[@]}"; do
+  [[ -d "$wt" ]] || continue
+  [[ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ]] || continue
+  [[ -z "$(git -C "$wt" rev-list "origin/$BASE_BRANCH..HEAD" 2>/dev/null)" ]] || continue
+  wt_branch="$(git -C "$wt" branch --show-current 2>/dev/null)"
+  if git -C "$CHECKOUT" worktree remove "$wt" >>"$LOG" 2>&1; then
+    log "removed unused worktree $wt"
+    if [[ -n "$wt_branch" ]] && ! git -C "$CHECKOUT" ls-remote --exit-code --heads origin "$wt_branch" >/dev/null 2>&1; then
+      git -C "$CHECKOUT" branch -D "$wt_branch" >>"$LOG" 2>&1 && log "deleted empty branch $wt_branch"
+    fi
+  else
+    log "WARN: could not remove unused worktree $wt"
+  fi
+done
 
 fi  # end of the full-run block skipped by --replay-only
 
