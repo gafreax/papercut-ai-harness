@@ -1,0 +1,82 @@
+{
+  "$comment": "Repositories that share the base config's tracker scope. Each entry is an override of the base: objects merge, `verify` is replaced whole, sandbox path and domain lists are added to the base's. Order = run order after the default project.",
+  "base": "config/config.json",
+  "default": "my-frontend",
+  "projects": {
+    "my-frontend": {},
+    "my-api": {
+      "project": {
+        "name": "my-api",
+        "repo": "my-org/my-api",
+        "checkout": "~/Workspace/my-api"
+      },
+      "verify": {
+        "install": "HUSKY=0 pnpm install --frozen-lockfile",
+        "hook_install": "pnpm prepare",
+        "hook_probe": "test -x \"$(git config core.hooksPath)/pre-commit\"",
+        "hooks_path": "{checkout}/.husky/_",
+        "env_sync": null,
+        "checks": [
+          "pnpm lint",
+          "pnpm build",
+          "pnpm test"
+        ],
+        "push_checks": [
+          "pnpm lint",
+          "pnpm build",
+          "pnpm test"
+        ],
+        "$push_checks": "Run by the orchestrator before every push. Set it when the pre-push hook does not already run the checks; leave it out when it does.",
+        "package_checks": "`pnpm build` and `pnpm test <path>` on the specs of what you touched",
+        "single_test": "`pnpm test <path>`",
+        "extra_allow": [
+          "pnpm test"
+        ],
+        "generated_drift_commit": "chore(codegen): sync generated code",
+        "notes": [
+          "Rules a worker must follow in this repository, one per line."
+        ]
+      }
+    },
+    "my-go-service": {
+      "project": {
+        "name": "my-go-service",
+        "repo": "my-org/my-go-service",
+        "checkout": "~/Workspace/my-go-service"
+      },
+      "verify": {
+        "install": "go mod download",
+        "hook_install": null,
+        "hook_probe": null,
+        "hooks_path": null,
+        "env_sync": null,
+        "checks": [
+          "go vet ./...",
+          "go test ./..."
+        ],
+        "push_checks": [
+          "go vet ./...",
+          "go test ./..."
+        ],
+        "package_checks": "`go test` on the packages you touched",
+        "single_test": "`go test ./<package> -run <TestName> -count=1`",
+        "extra_allow": [
+          "go test",
+          "go vet"
+        ],
+        "generated_drift_commit": "chore(codegen): sync generated code",
+        "notes": []
+      },
+      "sandbox": {
+        "allowed_domains": [
+          "proxy.golang.org",
+          "sum.golang.org"
+        ],
+        "extra_write_paths": [
+          "~/go",
+          "~/Library/Caches/go-build"
+        ]
+      }
+    }
+  }
+}

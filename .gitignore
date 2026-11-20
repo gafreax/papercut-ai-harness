@@ -13,3 +13,6 @@ config/config.json
 
 # Git worktrees for parallel work on this repo.
 /.worktrees/
+
+# The live project list: paths are per-person, like config.json.
+config/projects.json

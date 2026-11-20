@@ -10,7 +10,7 @@ the guarantees are made real instead of merely stated.
 ## Shape of a run
 
 ```
-launchd (06:00)
+launchd (10:00)
   └── papercuts-daily.sh          ← NOT sandboxed: holds credentials
        ├── tracker dump           → run_dir/{candidates.json, eligible.txt, issues/*.json}
        ├── render prompt+settings → run_dir/{prompt.md, sandbox-settings.json}
@@ -23,6 +23,50 @@ launchd (06:00)
 
 The runner is the only component holding credentials. Everything the model does
 happens between those two brokered steps.
+
+## Several repositories, one backlog
+
+When the paper cuts of several repositories live under one epic, with nothing on
+the item saying which repository it is about, `config/projects.json` lists the
+repositories and `bin/papercuts-all.sh` runs the whole shape above once per
+repository, **in series**: the run is unattended, so hours are fine, and two
+test suites at once on one machine is what made tests time out.
+
+```
+launchd (10:00)
+  └── papercuts-all.sh
+       ├── one merged config per project (base config + project override)
+       └── for each project, default first:
+             papercuts-daily.sh
+               ├── tracker dump (same scope for every project)
+               ├── route.sh  → keeps only the items whose code lives here
+               └── … as above
+```
+
+**Routing** (`bin/route.sh`) is a reading job, so it goes to a short model
+session that can only read: `--restricted` with `Read`, `Grep` and `Glob`, the
+checkouts as its only directories, and an answer validated against a JSON
+schema and then again by `jq` against the list of known repositories. The first
+project routes every item it sees; the rest reuse the answers for that pass. An
+item that needs more than one repository, or that nobody can place, goes to the
+default project, whose orchestrator drops it with a comment or asks — nothing
+is dropped silently, and each orchestrator re-checks the routing before
+delegating, since the router reads and does not test.
+
+**Per-repository verification.** Each project replaces `verify` whole: a Go
+repository shares no command with a pnpm one. Repositories whose pre-push hook
+does not run the checks (or that have no hooks at all) list them in
+`verify.push_checks`, and the orchestrator runs them before every push — the
+same gate a pre-push hook gives a repository that has one. `verify.notes` carries the rules a worker
+must follow there (generated files, coverage floors, contracts not to touch),
+`verify.extra_allow` the command prefixes a worker needs beyond the checks
+themselves. Sandbox path and domain lists are *added* to the base's, never
+replace it, so a project can open egress for its toolchain but cannot drop a
+deny rule.
+
+In a multi-repo run each project logs to `papercuts-<date>-<project>.log` and
+counts its own aborts; quiet projects add no banner, and one notification at the
+end summarises every repository.
 
 ## Why it runs locally, not in the cloud
 

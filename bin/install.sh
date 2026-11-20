@@ -12,8 +12,22 @@ set -uo pipefail
 HARNESS_DIR="${0:A:h:h}"
 CONFIG="${PAPERCUTS_CONFIG:-$HARNESS_DIR/config/config.json}"
 LABEL="ai.papercuts.$(jq -r '.project.name' "$CONFIG" 2>/dev/null || print -r -- unknown)"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 RUNNER="$HARNESS_DIR/bin/papercuts-daily.sh"
+# With a project list, one job runs every repository in series
+# (bin/papercuts-all.sh) and replaces the single-project job, which is removed
+# so the same repository is not run twice a day.
+if [[ -f "$HARNESS_DIR/config/projects.json" ]]; then
+  SINGLE_LABEL="$LABEL"
+  LABEL="ai.papercuts.all"
+  RUNNER="$HARNESS_DIR/bin/papercuts-all.sh"
+  CONFIG="$HARNESS_DIR/$(jq -r '.base // "config/config.json"' "$HARNESS_DIR/config/projects.json")"
+  if [[ -f "$HOME/Library/LaunchAgents/$SINGLE_LABEL.plist" ]]; then
+    launchctl bootout "gui/$(id -u)/$SINGLE_LABEL" 2>/dev/null
+    rm -f "$HOME/Library/LaunchAgents/$SINGLE_LABEL.plist"
+    print -r -- "removed the single-project job $SINGLE_LABEL"
+  fi
+fi
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 [[ -f "$CONFIG" ]] || { print -r -- "no config at $CONFIG — copy config/config.example.json and edit it first" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { print -r -- "jq is required" >&2; exit 1; }
@@ -29,7 +43,7 @@ if ! [[ "$hour" =~ '^[0-9]+$' && "$minute" =~ '^[0-9]+$' ]] || (( hour > 23 || m
   exit 1
 fi
 
-chmod +x "$RUNNER" "$HARNESS_DIR/bin/render.sh" 2>/dev/null
+chmod +x "$RUNNER" "$HARNESS_DIR/bin/papercuts-daily.sh" "$HARNESS_DIR/bin/render.sh" "$HARNESS_DIR/bin/route.sh" 2>/dev/null
 mkdir -p "$HOME/Library/LaunchAgents" "$HARNESS_DIR/.state/logs"
 
 # RunAtLoad stays false: installing the job should never be the thing that

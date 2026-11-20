@@ -9,6 +9,7 @@ set -uo pipefail
 HARNESS_DIR="${0:A:h:h}"
 CONFIG="${PAPERCUTS_CONFIG:-$HARNESS_DIR/config/config.json}"
 LABEL="ai.papercuts.$(jq -r '.project.name' "$CONFIG" 2>/dev/null || print -r -- unknown)"
+[[ -f "$HARNESS_DIR/config/projects.json" ]] && LABEL="ai.papercuts.all"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then

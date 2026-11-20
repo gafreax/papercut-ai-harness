@@ -20,8 +20,11 @@ run_dir="${2:-}"
 [[ -n "$verb" && -n "$run_dir" ]] || { print -r -- "usage: jira.sh <dump|replay> <run_dir>" >&2; exit 2; }
 
 # thomctl resolves its config by walking up from the cwd, so every call has to
-# happen inside the project checkout — not in the harness directory.
-cd "$PC_CHECKOUT" || { print -r -- "jira.sh: cannot cd into $PC_CHECKOUT" >&2; exit 1; }
+# happen inside a checkout that has one — not in the harness directory. That is
+# the project's own checkout, unless tracker.cwd names another: in a multi-repo
+# run the scope is shared, and not every repository is set up for thomctl.
+tracker_cwd="${PC_TRACKER_CWD:-$PC_CHECKOUT}"
+cd "$tracker_cwd" || { print -r -- "jira.sh: cannot cd into $tracker_cwd" >&2; exit 1; }
 
 jlog() { print -r -- "[$(date +%H:%M:%S)] $*" | tee -a "$run_dir/jira-actions.log"; }
 
@@ -75,7 +78,15 @@ if [[ "$verb" == "dump" ]]; then
   # board says who owns them before any run picks one up, and so they count as
   # eligible below. Items assigned to someone else are never touched.
   for key in $(jq -r '.[] | select(.assignee == null) | .key' "$run_dir/candidates.json"); do
-    if acli jira workitem assign --key "$key" --assignee "$PC_TRACKER_EMAIL" --yes >/dev/null 2>&1; then
+    # A rehearsal writes nothing to the tracker, this included; the item still
+    # counts as assigned so the rehearsal sees the same candidates a real run would.
+    if [[ "${PAPERCUTS_DRY_JIRA:-0}" == "1" ]]; then
+      print -r -- "dry: would assign $key to $PC_TRACKER_EMAIL (unassigned)"
+      jq --arg k "$key" --arg me "$PC_TRACKER_USER" \
+        'map(if .key == $k then .assignee = $me else . end)' \
+        "$run_dir/candidates.json" >"$run_dir/candidates.json.tmp" \
+        && mv "$run_dir/candidates.json.tmp" "$run_dir/candidates.json"
+    elif acli jira workitem assign --key "$key" --assignee "$PC_TRACKER_EMAIL" --yes >/dev/null 2>&1; then
       print -r -- "assigned $key to $PC_TRACKER_EMAIL (was unassigned)"
       jq --arg k "$key" --arg me "$PC_TRACKER_USER" \
         'map(if .key == $k then .assignee = $me else . end)' \

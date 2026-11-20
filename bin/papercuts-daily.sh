@@ -41,6 +41,10 @@ if [[ "${PAPERCUTS_DRY_JIRA:-0}" == "1" && "$MODE" == "full" ]]; then
   exit 2
 fi
 
+# A rehearsal must not write to the tracker from its very first step: the dump
+# assigns unassigned items, and it runs before the token handling further down.
+[[ "$MODE" == "--dry" ]] && export PAPERCUTS_DRY_JIRA=1
+
 [[ -f "$CONFIG" ]] || { print -r -- "no config at $CONFIG — copy config/config.example.json and edit it (or run the activate-papercuts skill)" >&2; exit 1; }
 
 command -v jq >/dev/null 2>&1 || { print -r -- "jq is required" >&2; exit 1; }
@@ -68,7 +72,9 @@ STATE_DIR="${PAPERCUTS_STATE_DIR:-$HARNESS_DIR/.state}"
 LOG_DIR="$STATE_DIR/logs"
 mkdir -p "$LOG_DIR"
 TODAY="$(date +%Y-%m-%d)"
-LOG="$LOG_DIR/papercuts-$TODAY.log"
+# In a multi-repo run (bin/papercuts-all.sh sets PAPERCUTS_MULTI) each project
+# gets its own log, so one repository's day can be read without the others'.
+LOG="$LOG_DIR/papercuts-$TODAY${PAPERCUTS_MULTI:+-$PROJECT_NAME}.log"
 # One directory per run, not per day. The queue, report, blocked.txt, prompt and
 # ref snapshots all live here and are written assuming nobody else has touched
 # them; on 2026-11-11 two runs shared a per-day directory and the second replay
@@ -102,6 +108,14 @@ PARKED_FILE="$STATE_DIR/parked.tsv"
 # happened hours later. A missing file for today means the job never ran.
 notify() {
   local title="$1" body="$2"
+  # Multi-repo: every outcome goes into the run's summary, which papercuts-all.sh
+  # turns into one notification; a project's quiet day adds no banner of its
+  # own, and every other banner says which repository it is about.
+  if [[ -n "${PAPERCUTS_MULTI:-}" ]]; then
+    [[ -n "${PAPERCUTS_SUMMARY:-}" ]] && print -r -- "$PROJECT_NAME: ${title#Paper cuts: } — $body" >>"$PAPERCUTS_SUMMARY"
+    [[ "$title" == "Paper cuts: nothing to do" ]] && return 0
+    title="${title/#Paper cuts:/Paper cuts · $PROJECT_NAME:}"
+  fi
   [[ "$(cfg '.notify.enabled')" == "true" ]] || return 0
   local journal="$(cfg '.notify.journal')"
   if [[ -n "$journal" ]]; then
@@ -130,7 +144,7 @@ notify() {
 # The streak file is the durable half: the count survives on disk until a run
 # gets through, and it goes into the notification text so a repeat cannot read
 # like a one-off.
-STREAK_FILE="$STATE_DIR/consecutive-aborts"
+STREAK_FILE="$STATE_DIR/consecutive-aborts${PAPERCUTS_MULTI:+.$PROJECT_NAME}"
 
 # The file holds "<count> <first-failure date>". The date has to be carried
 # inside it: the file's own mtime is rewritten by every abort, so it would
@@ -197,6 +211,8 @@ cd "$CHECKOUT" || abort "checkout not found: $CHECKOUT"
 
 # Config the tracker adapter reads from the environment.
 export PC_CHECKOUT="$CHECKOUT"
+tracker_cwd="$(cfg '.tracker.cwd')"
+export PC_TRACKER_CWD="${tracker_cwd:+$(expand "$tracker_cwd")}"
 export PC_TRACKER_PARENT="$(cfg '.tracker.scope.parent')"
 export PC_TRACKER_LABEL="$(cfg '.tracker.scope.label')"
 export PC_TRACKER_USER="$(cfg '.tracker.owner.tracker_user')"
@@ -254,7 +270,8 @@ repo="$(cfg '.project.repo')"
 # word-splitting it once created "100" and "Papercuts" for "100 Papercuts".
 existing_labels="$(gh label list -R "$repo" --limit 500 --json name -q '.[].name' 2>>"$LOG")" \
   || log "WARN: could not list labels on $repo — trying to create the configured ones anyway"
-cfg_arr '.pull_request.labels' | while IFS= read -r label; do
+# A rehearsal writes nothing to GitHub, labels included: it opens no PR to need one.
+[[ "$MODE" == "--dry" ]] || cfg_arr '.pull_request.labels' | while IFS= read -r label; do
   [[ -n "$label" ]] || continue
   if ! grep -qxF -- "$label" <<<"$existing_labels"; then
     gh label create "$label" -R "$repo" --color D4C5F9 \
@@ -283,6 +300,16 @@ fi
 # re-judged nor commented on again.
 park_filter "$RUN_DIR/eligible.txt" "$RUN_DIR/updated.tsv" "$PARKED_FILE" "$RUN_DIR/parked-skipped.txt"
 parked_count=$(wc -l <"$RUN_DIR/parked-skipped.txt" | tr -d ' ')
+
+# Multi-repo: the scope holds items for every repository of the run, so keep
+# only the ones whose code lives here. See bin/route.sh.
+if [[ -n "${PAPERCUTS_ROUTES:-}" ]]; then
+  if zsh "$HARNESS_DIR/bin/route.sh" "$RUN_DIR" "$PAPERCUTS_ROUTES" "$PROJECT_NAME" "${PAPERCUTS_DEFAULT_PROJECT:-$PROJECT_NAME}" >>"$LOG" 2>&1; then
+    log "routed here: $(cut -f1 "$RUN_DIR/routing.tsv" | tr '\n' ' ')— elsewhere: $(cut -f1,2 "$RUN_DIR/routed-away.tsv" | tr '\t\n' ': ')"
+  else
+    abort "routing failed — see $RUN_DIR/route.err"
+  fi
+fi
 
 eligible_count=$(wc -l <"$RUN_DIR/eligible.txt" | tr -d ' ')
 log "eligible candidates: $eligible_count ($(tr '\n' ' ' <"$RUN_DIR/eligible.txt")), parked: $parked_count"

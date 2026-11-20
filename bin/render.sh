@@ -40,6 +40,53 @@ worktree_pattern="${worktree_pattern//\{project\}/$project}"
 env_sync="$(expand "$(cfg '.verify.env_sync')")"
 env_sync="${env_sync//\{project\}/$project}"
 
+# Repository-dependent steps of the worker brief. A repository without
+# environment files, without git hooks or without a pre-push hook gets a step
+# that says so, rather than a command that cannot work.
+if [[ -n "$env_sync" ]]; then
+  env_step="- **Environment files are gitignored, so a fresh worktree has none. Never
+  hand-copy them between worktrees — that causes silent drift:**
+  \`$env_sync\`"
+else
+  env_step="- This repository needs no environment files for its checks: do not
+  create any."
+fi
+
+hook_probe="$(cfg '.verify.hook_probe')"
+hook_install="$(cfg '.verify.hook_install')"
+if [[ -n "$hook_probe" ]]; then
+  hook_step="- **Then prove the git hooks will actually run, before writing any code:**
+  \`$hook_probe\`
+  git skips missing hooks *silently*, so without this your commits never see
+  the commit linter and your push never runs the checks — while looking
+  perfectly successful. If the probe fails, try \`$hook_install\` once and
+  probe again. If it still fails, **stop and report it**: pushing unverified is
+  not an option, and the blocker is worth more than the ticket.
+  Do not try to create hook files by hand or to rewrite \`core.hooksPath\`: hooks
+  are executable code that runs outside your sandbox, and an agent editing the
+  mechanism that verifies it is exactly what nobody wants."
+else
+  hook_step="- This repository has no git hooks: nothing checks your commit for you.
+  The checks below are the only gate before CI, so run them, all of them."
+fi
+
+package_checks="$(cfg '.verify.package_checks')"
+[[ -n "$package_checks" ]] || package_checks="the repository checks ($checks_list) scoped to what you touched where they allow it"
+single_test="$(cfg '.verify.single_test')"
+[[ -n "$single_test" ]] || single_test="the test runner on that one file"
+
+push_checks_list="$(jq -r '.verify.push_checks // [] | map("`" + . + "`") | join(", ")' "$CONFIG")"
+if [[ -n "$push_checks_list" ]]; then
+  push_checks="1. This repository has no pre-push hook that runs its checks, so you run
+   them, in the worktree, after the rebase and before pushing: $push_checks_list.
+   Push only when every one passes; a failure is classified as in step 3."
+else
+  push_checks=""
+fi
+
+repo_notes="$(jq -r '.verify.notes // [] | map("- " + .) | join("\n")' "$CONFIG")"
+[[ -n "$repo_notes" ]] && repo_notes="$repo_notes"$'\n'
+
 template="$(<"$HARNESS_DIR/prompts/orchestrator.md")"
 
 subst() { template="${template//$1/$2}"; }
@@ -62,6 +109,12 @@ subst '{{HOOK_PROBE}}'       "$(cfg '.verify.hook_probe')"
 subst '{{ENV_SYNC}}'         "$env_sync"
 subst '{{CHECKS}}'           "$checks_list"
 subst '{{DRIFT_COMMIT}}'     "$(cfg '.verify.generated_drift_commit')"
+subst '{{ENV_STEP}}'         "$env_step"
+subst '{{HOOK_STEP}}'        "$hook_step"
+subst '{{PACKAGE_CHECKS}}'   "$package_checks"
+subst '{{SINGLE_TEST}}'      "$single_test"
+subst '{{PUSH_CHECKS}}'      "$push_checks"
+subst '{{REPO_NOTES}}'       "$repo_notes"
 subst '{{PR_LABELS}}'        "$(jq -r '.pull_request.labels // [] | join(", ") | if . == "" then "none" else . end' "$CONFIG")"
 
 print -r -- "$template" >"$RUN_DIR/prompt.md"
@@ -101,6 +154,10 @@ jq -n \
         allow: (
           [$cfg.verify.install, $cfg.verify.hook_install, $cfg.verify.hook_probe]
           + ($cfg.verify.checks // [])
+          + ($cfg.verify.push_checks // [])
+          # Command prefixes a worker needs in forms no check spells out, such
+          # as `go test ./services/core/...` when only `go test ./...` is a check.
+          + ($cfg.verify.extra_allow // [])
           | map(select(. != null and . != ""))
           | map(., sub("^([A-Za-z_][A-Za-z0-9_]*=[^ ]* +)+"; ""))
           | unique

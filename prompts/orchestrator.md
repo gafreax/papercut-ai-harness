@@ -122,6 +122,16 @@ Your candidates are exactly the keys in `eligible.txt` — {{SCOPE_DESC}}. Read
 `issues/<KEY>.json` in full for each: description *and* comments. A comment
 often says "actually we decided X".
 
+**Routing.** If `$PAPERCUTS_RUN_DIR/routing.tsv` exists, this is one project
+of a multi-repository run: the scope holds items for several repositories, and
+a reading pass already sent each item to the repository its code lives in
+(`key`, `repo`, `reason`). Verify it — the router reads, it does not test. An
+item whose code is not in `{{REPO}}` is dropped with a `comment` naming the
+repository it belongs to, as you found it. An item routed `multiple` needs
+changes in more than one repository, so it is not a paper cut: drop it with a
+`comment` that says which. An item routed `none` is one nobody could place:
+if you cannot place it either, queue an `ask` saying what is missing.
+
 **Hard filters, on top of what the runner already applied:**
 
 - No work already in flight: no **open or merged** PR for the item
@@ -203,9 +213,7 @@ packages involved, whether this is a rehearsal, and the instructions below
   `git -C <worktree> switch -c <branch>`
   where the worktree path and branch follow `{{WORKTREE_PATTERN}}` and
   `{{BRANCH_PATTERN}}` with `{key}` and a short kebab `{slug}`.
-- **Environment files are gitignored, so a fresh worktree has none. Never
-  hand-copy them between worktrees — that causes silent drift:**
-  `{{ENV_SYNC}}`
+{{ENV_STEP}}
 - `cd` into the worktree, then run `{{INSTALL_CMD}}` there, and stay inside
   it for everything. Use that command **as written** — not through
   `pnpm --dir`, `-C` or a compound one-liner: the run's permissions allow the
@@ -214,20 +222,11 @@ packages involved, whether this is a rehearsal, and the instructions below
   deliberate — the installer rewrites `core.hooksPath` in the *shared*
   `.git/config` to a relative path, which silently disables hooks in every
   worktree. The runner already pinned it correctly before you started.
-- **Then prove the git hooks will actually run, before writing any code:**
-  `{{HOOK_PROBE}}`
-  git skips missing hooks *silently*, so without this your commits never see
-  the commit linter and your push never runs the checks — while looking
-  perfectly successful. If the probe fails, try `{{HOOK_INSTALL}}` once and
-  probe again. If it still fails, **stop and report it**: pushing unverified is
-  not an option, and the blocker is worth more than the ticket.
-  Do not try to create hook files by hand or to rewrite `core.hooksPath`: hooks
-  are executable code that runs outside your sandbox, and an agent editing the
-  mechanism that verifies it is exactly what nobody wants.
+{{HOOK_STEP}}
 - Read the `CONTEXT.md` of every package you touch plus the project's agent
   rules before writing code. Cleanup-on-touch is **bounded**: fix only what you
   are already touching, no sweeps.
-- Test-first where practical: a failing test that captures the paper cut, then
+{{REPO_NOTES}}- Test-first where practical: a failing test that captures the paper cut, then
   the fix. If the change is genuinely untestable at unit level (pure spacing or
   colour), say so in the PR body — do not write a hollow test to look thorough.
   **Then prove the test actually runs**: confirm the runner collects it (globs,
@@ -235,13 +234,12 @@ packages involved, whether this is a rehearsal, and the instructions below
 - Conventional commits with a scope the commit linter accepts. If no valid
   scope fits what you changed, that is a defect in the linter config worth its
   own commit — do not mislabel the change to get past it.
-- Before committing, run `pnpm typecheck` and the tests of the package you
-  touched (from that package's directory: `pnpm test`), and fix what *your*
-  change broke. Never `--no-verify` on commit.
+- Before committing, run {{PACKAGE_CHECKS}}, and fix what *your* change
+  broke. Never `--no-verify` on commit.
 - **Do not push and do not open the PR.** The orchestrator publishes every
-  item one at a time once all workers are done: the pre-push hook runs the
-  whole test suite, and several of them running at once on one machine is
-  what made unrelated tests time out on 2026-11-11.
+  item one at a time once all workers are done: the full checks run before
+  each push, and several of them running at once on one machine is what made
+  unrelated tests time out on 2026-11-11.
 - Instead, write the PR to `$PAPERCUTS_RUN_DIR/pr-bodies/<KEY>.md`: the first
   line is the PR title (a conventional commit subject ending in `(<KEY>)`),
   then a blank line, then the body, in English, reviewer-oriented: **Ticket**
@@ -298,9 +296,10 @@ For each item, in turn, inside its worktree:
    regenerates code from a live source, a branch cut hours ago is broken *by
    construction*. If the rebase conflicts: `git rebase --abort`, stop this
    item and report — never resolve conflicts in someone else's work.
+{{PUSH_CHECKS}}
 2. `git push -u origin <branch>` **with the hooks on**. Confirm the checks ran:
    a push that returns instantly did not run them.
-3. If the push fails, read the hook output and classify it:
+3. If the push, or a check above, fails, read the output and classify it:
    - **Generated-file drift**: commit it on its own, never folded into the
      functional commit (`{{DRIFT_COMMIT}}`), and push again. This retry is free.
    - **Lint, dead-code, codegen or type errors**: deterministic, so a retry
@@ -309,7 +308,7 @@ For each item, in turn, inside its worktree:
    - **Failing tests**: collect the failing test files. If any is a file this
      branch changed, or tests what it changed, the change is broken: stop the
      item. Otherwise re-run **each failing file on its own**, from its
-     package directory (`pnpm test <path>`). If one fails alone, it is a real
+     package directory ({{SINGLE_TEST}}). If one fails alone, it is a real
      failure — stop the item and report it as broken on the base (it is not
      yours to fix). If **all pass alone**, the failure came from load, not from
      the code: push again. At most **3 push attempts** per item in total; after
