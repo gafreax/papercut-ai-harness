@@ -166,6 +166,12 @@ up unattended or `hitl` when a human must decide first, and queue a `comment`
 on the original explaining the split. You cannot delegate a slice in *this*
 run: it does not exist yet, so it is not in `eligible.txt`.
 
+**Priority.** `eligible.txt` is ordered by tracker priority, highest first,
+and each `issues/<KEY>.json` carries a `priority` field. Judge candidates in
+that order and, among those that pass the tests above, take the higher
+priority first. When two selected items would collide on the same files, keep
+the higher-priority one.
+
 **Cap.** At most {{MAX_ITEMS}} per run, fewer is expected. If two candidates
 touch the same files, keep one — parallel agents must not collide. Zero is a
 valid outcome: queue an `ask` on every item blocked on a human decision, and

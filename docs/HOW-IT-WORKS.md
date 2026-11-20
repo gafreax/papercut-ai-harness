@@ -58,6 +58,7 @@ The agents run under the Claude Code sandbox, configured per run in
 | `filesystem.denyWrite` | the env-file source and the harness's own prompt are read-only |
 | `filesystem.denyRead` | `~/.ssh`, `~/.aws`, keychain |
 | `network.strictAllowlist` | egress denied deterministically outside the domain list |
+| `network.allowLocalBinding` | browser-mode story tests can listen on localhost; egress is unchanged (`allow_local_binding`) |
 | `permissions.defaultMode: acceptEdits` | no `bypassPermissions` anywhere |
 
 Verified by trying: writing outside the workspace fails, reading `~/.ssh` fails,

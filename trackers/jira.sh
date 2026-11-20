@@ -71,6 +71,21 @@ if [[ "$verb" == "dump" ]]; then
     thomctl issue list --json >"$run_dir/candidates.json" || exit 1
   fi
 
+  # Unassigned items in scope are the owner's to take: assign them now, so the
+  # board says who owns them before any run picks one up, and so they count as
+  # eligible below. Items assigned to someone else are never touched.
+  for key in $(jq -r '.[] | select(.assignee == null) | .key' "$run_dir/candidates.json"); do
+    if acli jira workitem assign --key "$key" --assignee "$PC_TRACKER_EMAIL" --yes >/dev/null 2>&1; then
+      print -r -- "assigned $key to $PC_TRACKER_EMAIL (was unassigned)"
+      jq --arg k "$key" --arg me "$PC_TRACKER_USER" \
+        'map(if .key == $k then .assignee = $me else . end)' \
+        "$run_dir/candidates.json" >"$run_dir/candidates.json.tmp" \
+        && mv "$run_dir/candidates.json.tmp" "$run_dir/candidates.json"
+    else
+      print -r -- "jira.sh: could not assign $key to $PC_TRACKER_EMAIL" >&2
+    fi
+  done
+
   # Labels the owner has declared off-limits (typically `hitl`: a human has to
   # look first). thomctl filters by label, so ask it once per label and
   # subtract the union.
@@ -94,6 +109,7 @@ if [[ "$verb" == "dump" ]]; then
   # dropped (park_filter in bin/papercuts-lib.sh). thomctl does not expose the
   # field, so it comes from acli. A key with no line here stays eligible.
   : >"$run_dir/updated.tsv"
+  : >"$run_dir/priority.tsv"
   while read -r key; do
     [[ -z "$key" ]] && continue
     thomctl issue view "$key" --json >"$run_dir/issues/$key.json" 2>/dev/null \
@@ -108,6 +124,12 @@ if [[ "$verb" == "dump" ]]; then
     jq --argjson c "$comments" '. + {comments: $c}' "$run_dir/issues/$key.json" >"$run_dir/issues/$key.json.tmp" \
       && mv "$run_dir/issues/$key.json.tmp" "$run_dir/issues/$key.json" \
       || { print -r -- "jira.sh: could not add the comments to $key" >&2; exit 1; }
+    # thomctl has no priority field either. The run takes the most urgent items
+    # first, so it goes into the dump and orders eligible.txt below.
+    pri=$(acli jira workitem view "$key" --fields priority --json 2>/dev/null | jq -r '.fields.priority.name // empty')
+    jq --arg p "${pri:-unknown}" '. + {priority: $p}' "$run_dir/issues/$key.json" >"$run_dir/issues/$key.json.tmp" \
+      && mv "$run_dir/issues/$key.json.tmp" "$run_dir/issues/$key.json"
+    print -r -- "$key"$'\t'"${pri:-unknown}" >>"$run_dir/priority.tsv"
     upd=$(item_updated "$key")
     if [[ -n "$upd" ]]; then
       print -r -- "$key"$'\t'"$upd" >>"$run_dir/updated.tsv"
@@ -115,6 +137,12 @@ if [[ "$verb" == "dump" ]]; then
       print -r -- "jira.sh: could not read the last update of $key" >&2
     fi
   done <"$run_dir/eligible.txt"
+
+  # Highest priority first; an unknown priority sorts after Lowest. The sort is
+  # stable, so items of equal priority keep the tracker's order.
+  awk -F'\t' 'BEGIN { r["Highest"]=1; r["High"]=2; r["Medium"]=3; r["Low"]=4; r["Lowest"]=5 }
+    { print ($2 in r ? r[$2] : 9) "\t" $1 }' "$run_dir/priority.tsv" \
+    | sort -s -n -k1,1 | cut -f2 >"$run_dir/eligible.txt"
 
   print -r -- "$(wc -l <"$run_dir/eligible.txt" | tr -d ' ') eligible"
   exit 0

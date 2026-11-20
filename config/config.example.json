@@ -107,7 +107,9 @@
     ],
     "$allowed_domains": "Keep this as short as the run allows. 'your-schema-host.example.com' stands for whatever host your pre-push checks have to reach (a codegen or schema-introspection endpoint, say); drop it if they reach nothing.",
     "weaker_network_isolation": true,
-    "$weaker_network_isolation": "Required by Go CLIs (gh, acli) that verify TLS through trustd. See docs/HOW-IT-WORKS.md."
+    "$weaker_network_isolation": "Required by Go CLIs (gh, acli) that verify TLS through trustd. See docs/HOW-IT-WORKS.md.",
+    "allow_local_binding": true,
+    "$allow_local_binding": "Lets browser-mode tests (Storybook/Vitest) open a port on localhost. It does not widen egress: allowed_domains still applies."
   },
   "pull_request": {
     "labels": [

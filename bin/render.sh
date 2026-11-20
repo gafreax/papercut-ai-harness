@@ -122,6 +122,7 @@ jq -n \
         enableWeakerNetworkIsolation: ($cfg.sandbox.weaker_network_isolation // false),
         network: {
           strictAllowlist: true,
+          allowLocalBinding: ($cfg.sandbox.allow_local_binding // false),
           allowedDomains: ($cfg.sandbox.allowed_domains // [])
         },
         filesystem: {
