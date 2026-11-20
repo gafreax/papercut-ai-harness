@@ -80,6 +80,11 @@ cat >"$PLIST" <<PLIST_EOF
 	     Standard. Every push of 2026-11-19/20 failed that way. -->
 	<key>ProcessType</key>
 	<string>Standard</string>
+	<!-- Nice 10 still lets the human's own work go first, but unlike
+	     Background it does not cap the job when the CPU is idle: the suite
+	     took 37 s at Nice 10, with turbo running one package at a time. -->
+	<key>Nice</key>
+	<integer>10</integer>
 </dict>
 </plist>
 PLIST_EOF

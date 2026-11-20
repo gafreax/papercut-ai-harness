@@ -15,7 +15,7 @@ launchd (06:00)
        ├── tracker dump           → run_dir/{candidates.json, eligible.txt, issues/*.json}
        ├── render prompt+settings → run_dir/{prompt.md, sandbox-settings.json}
        ├── claude -p (orchestrator, sandboxed)
-       │     └── N worker agents in parallel, one worktree each
+       │     └── N worker agents, one at a time, one worktree each
        │           └── fix → tests → hooks → push → PR
        │           └── queue tracker actions → run_dir/jira-actions/<KEY>.jsonl
        └── tracker replay         ← validates every queued action, then executes

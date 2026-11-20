@@ -46,7 +46,7 @@
     "max_items": 3,
     "orchestrator_model": "opus",
     "worker_model": "sonnet",
-    "turbo_concurrency": 2
+    "turbo_concurrency": 1
   },
   "verify": {
     "$comment": [

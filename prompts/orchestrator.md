@@ -173,16 +173,20 @@ priority first. When two selected items would collide on the same files, keep
 the higher-priority one.
 
 **Cap.** At most {{MAX_ITEMS}} per run, fewer is expected. If two candidates
-touch the same files, keep one — parallel agents must not collide. Zero is a
+touch the same files, keep one — each branch starts from the same base, so
+two of them on the same files would conflict. Zero is a
 valid outcome: queue an `ask` on every item blocked on a human decision, and
 a `comment` on the item you came closest to taking if that one is blocked for
 another reason, then go to Phase 3.
 
 ## Phase 2 — delegate
 
-Spawn one agent per selected item, **all in a single message** so they run
-concurrently: Agent tool, `subagent_type: "general-purpose"`, `model:
-"{{WORKER_MODEL}}"`.
+Spawn one agent per selected item, **one at a time**: start the next only
+when the previous one has returned. Agent tool, `subagent_type:
+"general-purpose"`, `model: "{{WORKER_MODEL}}"`. The run is unattended, so
+time is cheap and the machine is not: workers in parallel each run builds and
+test suites at once, and slow tests fail on their timeouts. In the order of
+Phase 1, highest priority first.
 
 Each brief must be self-contained — the agent has none of your context.
 Include: the item key and title, the problem in your own words, the acceptance
