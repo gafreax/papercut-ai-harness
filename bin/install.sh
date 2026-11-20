@@ -72,8 +72,14 @@ cat >"$PLIST" <<PLIST_EOF
 	<string>$HARNESS_DIR/.state/logs/launchd.out.log</string>
 	<key>StandardErrorPath</key>
 	<string>$HARNESS_DIR/.state/logs/launchd.err.log</string>
+	<!-- Standard, not Background. Background confines the job and every
+	     process it starts to the efficiency cores with throttled CPU and I/O,
+	     and the pre-push hook runs the whole unit suite from inside the job:
+	     measured on 2026-11-20, a monorepo unit suite took 391 s with 29 tests
+	     past their 5 s timeout under Background, against 43 s and none under
+	     Standard. Every push of 2026-11-19/20 failed that way. -->
 	<key>ProcessType</key>
-	<string>Background</string>
+	<string>Standard</string>
 </dict>
 </plist>
 PLIST_EOF
