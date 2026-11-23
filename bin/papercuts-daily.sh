@@ -414,6 +414,18 @@ while IFS= read -r key; do
       continue
     fi
   fi
+  # The pin above lives in the shared .git/config, and anything else working
+  # in the same repository while the run is going can rewrite it: on
+  # 2026-11-23 a hook installer run by another session, between the pin and
+  # the workers, put the relative path back, and every worker stopped at the
+  # hook probe. A per-worktree value outranks the shared one, so the pin is
+  # repeated in each worktree the run hands out, where nothing else writes.
+  if [[ -n "${hooks_path:-}" && -d "$hooks_path" ]]; then
+    if [[ "$(git -C "$CHECKOUT" config --get --bool extensions.worktreeConfig 2>/dev/null)" == "true" ]]; then
+      git -C "$wt" config --worktree core.hooksPath "$hooks_path" \
+        || log "WARN: could not pin core.hooksPath in $wt"
+    fi
+  fi
   WT_ADD_DIRS+=(--add-dir "$wt")
 done <"$RUN_DIR/eligible.txt"
 
