@@ -120,6 +120,20 @@
     "assign_to_owner": true,
     "$labels": "Applied to every PR the job opens, and ensured to exist on the code host before each run — gh pr create fails outright if a label is missing."
   },
+  "preflight": {
+    "$comment": "Credentials only a human can renew (a cloud login under a session length policy expires daily). Each check's `test` exits 0 while the credential is valid; `fix` is what the notification tells the human to run. The runner checks them before any project starts: if one has expired it notifies and waits for the login, then starts by itself. install.sh also schedules a check-only job at login and at warn_at, so the login can happen before the run. An empty list turns all of this off.",
+    "checks": [],
+    "$checks_example": [
+      { "name": "Cloud credentials", "test": "gcloud auth application-default print-access-token >/dev/null", "fix": "gcloud auth application-default login" }
+    ],
+    "warn_at": null,
+    "$warn_at": "HH:MM local time for the early check. Null means one hour before run.schedule.",
+    "wait_minutes": 120,
+    "remind_minutes": 30,
+    "retries": 3,
+    "$retries": "Tries per check before it counts as expired: at login or on wake the network may not be up yet, and a refresh that cannot reach the provider fails like an expired credential.",
+    "check_timeout_seconds": 60
+  },
   "notify": {
     "enabled": true,
     "journal": "~/papercuts-journal/{date}.md",

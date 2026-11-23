@@ -44,6 +44,16 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
 
+# Credentials a human has to renew are checked once, before any project
+# starts, from the base config: they are shared by the whole pass, and a
+# project's `verify` replaces the base's whole, so it is the wrong place. If one
+# has expired, preflight.sh notifies and waits for the login; the pass only
+# starts once it is valid.
+if ! zsh "$HARNESS_DIR/bin/preflight.sh" --wait --config "$BASE" --log "$LOG"; then
+  log "ABORT: credentials still expired after the preflight wait — no project started"
+  exit 1
+fi
+
 # One merged config per project. Objects merge deeply and the project wins,
 # except two places: `verify` is replaced whole (a Go repository shares no
 # command with a pnpm one, and a half-inherited hook setting is worse than

@@ -204,6 +204,14 @@ for shims in "$HOME/.local/share/mise/shims" "$HOME/.asdf/shims"; do
 done
 export PATH
 
+# Credentials a human has to renew: notify and wait for the login before any
+# work starts. In a multi-repo pass papercuts-all.sh has already done this once
+# for every project.
+if [[ -z "${PAPERCUTS_MULTI:-}" && "$MODE" != "--replay-only" ]]; then
+  zsh "$HARNESS_DIR/bin/preflight.sh" --wait --config "$CONFIG" --log "$LOG" \
+    || abort "credentials still expired after the preflight wait (see preflight in $LOG)"
+fi
+
 # The tracker CLI is required too, but only the adapter knows its name.
 required=(claude git gh jq)
 [[ "$TRACKER_KIND" == "jira" ]] && required+=(thomctl acli)

@@ -181,6 +181,30 @@ it hostile input — another person's ticket, a transition to `Done`, a body fil
 pointing at `/etc/passwd`, an unknown verb, a malformed line: all rejected, with
 the reason on the record.
 
+### Credentials only a human can renew
+
+Some logins cannot be stored for good. A cloud login bound to a person, under
+a session length policy, expires every day, and only a human at a browser can
+renew it. When the package registry's login had expired, the run found out two
+minutes in, aborted with "registry login failed", and the day was lost.
+
+`bin/preflight.sh` checks those credentials before any project starts. Each
+check in `preflight.checks` is a command that exits 0 while the credential is
+valid, plus the command a human runs to renew it. There are two modes:
+
+- `--wait`, used by the runners: if a check fails, notify, then wait (two
+  hours by default, with a reminder every 30 minutes) and start the run by
+  itself once the login is renewed. A late login costs a late run, not a lost
+  one.
+- `--warn`, a separate launchd job that install.sh schedules at login and one
+  hour before the run: it only checks and notifies, so the login can happen
+  before the run is due.
+
+A check fails a few times before it counts: at login or on wake the network is
+often not up yet, and a token refresh that cannot reach the provider looks
+exactly like an expired one. `tests/preflight.sh` covers both modes, with a
+mutation check.
+
 ## Rehearsal mode
 
 `--dry` runs everything for real except publishing. It is enforced by

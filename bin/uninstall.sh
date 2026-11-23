@@ -22,4 +22,9 @@ if [[ -f "$PLIST" ]]; then
   rm "$PLIST" && print -r -- "removed $PLIST"
 fi
 
+PF_LABEL="ai.papercuts.preflight"
+launchctl bootout "gui/$(id -u)/$PF_LABEL" 2>/dev/null && print -r -- "unloaded $PF_LABEL"
+[[ -f "$HOME/Library/LaunchAgents/$PF_LABEL.plist" ]] \
+  && rm "$HOME/Library/LaunchAgents/$PF_LABEL.plist" && print -r -- "removed $PF_LABEL.plist"
+
 print -r -- "run directories and logs kept in $HARNESS_DIR/.state/"
