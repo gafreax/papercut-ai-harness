@@ -194,6 +194,14 @@ log "=== run start (mode=$MODE, project=$PROJECT_NAME, tracker=$TRACKER_KIND) ==
 for extra in "$HOME/bin" "$HOME/.local/bin" /opt/homebrew/bin /usr/local/bin; do
   [[ -d "$extra" && ":$PATH:" != *":$extra:"* ]] && PATH="$extra:$PATH"
 done
+# Version-manager shims go in front of everything, Homebrew included. A login
+# shell puts /opt/homebrew/bin first, so a Homebrew node one patch ahead of the
+# version the repository pins wins silently — and a patch can ship a new ICU,
+# which changes date formatting and fails tests that pass in CI. Shims resolve
+# the version from the checkout the command runs in, worktrees included.
+for shims in "$HOME/.local/share/mise/shims" "$HOME/.asdf/shims"; do
+  [[ -d "$shims" ]] && path=("$shims" ${path:#$shims})
+done
 export PATH
 
 # The tracker CLI is required too, but only the adapter knows its name.
