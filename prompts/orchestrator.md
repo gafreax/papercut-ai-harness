@@ -255,6 +255,7 @@ packages involved, whether this is a rehearsal, and the instructions below
 
 While the agents run, do not touch the repository yourself.
 
+{{REVIEW_PHASE}}
 ## Containment
 
 Writes are confined to the workspace root; the environment-file source is
@@ -278,7 +279,8 @@ it only when every worker has returned, and never run two pushes at once.
 Rehearsal (`PAPERCUTS_NO_PUBLISH=1`): skip this phase; queue `{{IN_PROGRESS}}`
 for each committed item as in the table above.
 
-**What to publish:** every item a worker finished this run, plus every branch
+**What to publish:** every item a worker finished this run (and, when the
+review gate above is on, that passed it), plus every branch
 an *earlier* run left committed but unpublished. Find those in Phase 0: the
 worktrees matching `{{WORKTREE_PATTERN}}` whose branch matches
 `{{BRANCH_PATTERN}}`, with no remote branch, no open PR, and at least one
@@ -334,6 +336,8 @@ Write `$PAPERCUTS_RUN_DIR/report.md` and print the same content:
 - Candidates considered, and for each dropped one: the single reason why.
 - Items delegated → branch → PR URL → what was tested, and **how you know the
   tests ran**.
+- For each reviewed item: the defects found, which were fixed, the notes left
+  open, and any advisor skipped or unavailable.
 - Tracker actions queued, by file — outcomes land in `jira-actions.log` after
   you exit.
 - Splits queued: parent item and slice titles (keys do not exist yet).

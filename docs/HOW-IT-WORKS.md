@@ -16,7 +16,9 @@ launchd (10:00)
        ├── render prompt+settings → run_dir/{prompt.md, sandbox-settings.json}
        ├── claude -p (orchestrator, sandboxed)
        │     └── N worker agents, one at a time, one worktree each
-       │           └── fix → tests → hooks → push → PR
+       │           └── fix → tests → commit
+       │           └── review gate (optional): review skill + advisors → fix round
+       │     └── publish, one at a time: rebase → hooks → push → PR
        │           └── queue tracker actions → run_dir/jira-actions/<KEY>.jsonl
        └── tracker replay         ← validates every queued action, then executes
 ```
@@ -328,6 +330,28 @@ the remainder was smaller than the description suggested.
 
 That is the shape of the value: not "the machine fixed three things", but "the
 backlog is now more honest than it was yesterday".
+
+## Review before publishing
+
+A worker that says "done" has passed the checks it knew to run. That is not
+the same as a change a reviewer would accept: the checks do not know the ticket
+asked for three fields and the diff covers two, or that a fallback path now
+swallows an error. Those come back as follow-up tickets, after the merge.
+
+With a `review` block in the config, the orchestrator closes that gap before
+anything is pushed. When a worker returns it runs the configured review skill on
+the diff, giving it the base branch and the ticket file, since an unattended run
+cannot answer questions and cannot reach the tracker. Then it asks each
+configured advisor agent (a deployability reviewer, say) for a read-only opinion.
+The orchestrator judges each finding itself, as a defect it would refuse to
+merge or as a note, so the gate is not "any finding blocks". Defects go back to
+a fresh worker in the same worktree for a bounded number of rounds. A defect
+still open after that keeps the item unpublished, and the item lands in the
+tracker as in progress, with the defects listed in a comment. Notes go into the
+PR body under **Review**, never as comments on the pull request.
+
+The orchestrator runs the review, not the worker, for a mechanical reason: the
+review skill fans out to sub-agents, and a worker is already a sub-agent.
 
 ## Design rules worth stealing
 

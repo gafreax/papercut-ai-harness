@@ -111,6 +111,16 @@
     "allow_local_binding": true,
     "$allow_local_binding": "Lets browser-mode tests (Storybook/Vitest) open a port on localhost. It does not widen egress: allowed_domains still applies."
   },
+  "review": {
+    "$comment": "Optional gate between a worker finishing and its item being published. The orchestrator runs `skill` on the item's diff (it fans out to sub-agents, which a worker cannot do), then asks each agent in `advisors` for a read-only opinion, judges the findings, and sends real defects back to a worker for at most max_fix_rounds rounds. A defect still open after that keeps the item unpublished. Null skill turns the gate off.",
+    "skill": null,
+    "$skill": "Name of a skill installed for the user running the job, e.g. a two-axis review (repository standards + the ticket). It is invoked unattended: the orchestrator hands it the base branch and the ticket file, so it must not need to ask.",
+    "advisors": [],
+    "$advisors": "Agent types (subagent_type) to consult after the review, e.g. a deployability or security reviewer defined in the project's .claude/agents. Read-only by design: they get the diff and the worktree path.",
+    "agents_dir": null,
+    "$agents_dir": "Directory holding the advisors' definitions (<name>.md with frontmatter), when they are not in the checked-out project's own .claude/agents: a headless run does not load agents from parent directories. The runner passes them with --agents.",
+    "max_fix_rounds": 1
+  },
   "pull_request": {
     "labels": [
       "100 Papercuts"
