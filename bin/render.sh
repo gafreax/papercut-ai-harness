@@ -87,9 +87,101 @@ fi
 repo_notes="$(jq -r '.verify.notes // [] | map("- " + .) | join("\n")' "$CONFIG")"
 [[ -n "$repo_notes" ]] && repo_notes="$repo_notes"$'\n'
 
+# Review gate between a worker returning and its item being published. The
+# worker cannot run it itself: the review skill fans out to sub-agents, and a
+# worker is already one. No `review` block, or no skill in it, means no gate.
+review_skill="$(cfg '.review.skill')"
+if [[ -n "$review_skill" ]]; then
+  review_rounds="$(cfg '.review.max_fix_rounds')"
+  [[ -n "$review_rounds" ]] || review_rounds=1
+  review_advisors="$(jq -r '.review.advisors // [] | map("`" + . + "`") | join(", ")' "$CONFIG")"
+  # A headless run loads agents from its own project only: one defined in a
+  # parent directory (a .claude/agents shared by every repo under it) is
+  # not there. So the definitions are read here and handed to claude with
+  # --agents; an advisor whose file is missing is left out, and the prompt
+  # tells the orchestrator to report it rather than improvise one.
+  agents_dir="$(expand "$(cfg '.review.agents_dir')")"
+  if [[ -n "$agents_dir" ]]; then
+    agents_json='{}'
+    for name in ${(f)"$(jq -r '.review.advisors // [] | .[]' "$CONFIG")"}; do
+      file="$agents_dir/$name.md"
+      [[ -f "$file" ]] || { print -r -- "render: advisor $name has no definition in $agents_dir" >&2; continue; }
+      front="$(awk 'NR==1 && /^---$/ {f=1; next} f && /^---$/ {exit} f' "$file")"
+      body="$(awk 'NR==1 && /^---$/ {f=1; next} f==1 && /^---$/ {f=2; next} f==2' "$file")"
+      field() { print -r -- "$front" | sed -n "s/^$1:[[:space:]]*//p" | head -1; }
+      agents_json="$(jq --arg n "$name" --arg d "$(field description)" --arg t "$(field tools)" \
+        --arg m "$(field model)" --arg p "$body" '
+        .[$n] = ({description: $d, prompt: $p}
+          + (if $t != "" then {tools: ($t | split(",") | map(gsub("^ +| +$"; "")))} else {} end)
+          + (if $m != "" then {model: $m} else {} end))' <<<"$agents_json")"
+    done
+    print -r -- "$agents_json" >"$RUN_DIR/agents.json"
+  fi
+  if [[ -n "$review_advisors" ]]; then
+    advisor_step="3. **Advisory review.** Spawn, one at a time, each of these agents —
+   Agent tool, \`subagent_type\` set to the name: $review_advisors. They are
+   read-only, so brief each with paths, not with what you think of the change:
+   the item key and title, \`\$PAPERCUTS_RUN_DIR/issues/<KEY>.json\`, the diff
+   file and the worktree path. Ask one question: is this change safe to release
+   on its own, what could it break, and how would anyone notice? Skip an
+   advisor only when the diff gives it nothing to judge — a deployability
+   reviewer on a pure styling change — and say so in the report. If an agent
+   type is not available in this run, note it and go on: do not stand in for it
+   with a general agent."
+  else
+    advisor_step="3. No advisory agents are configured: go on."
+  fi
+  review_phase="## Phase 2b — review each item before it can be published
+
+Run this for each item **as soon as its worker returns, and before you spawn
+the next one**: the worktree is quiet, and only one agent at a time ever works
+in it. A branch an earlier run left unpublished (Phase 0) is reviewed the
+same way before Phase 3 publishes it. An item whose worker stopped without
+committing skips the review.
+Rehearsals run it too: it needs no network.
+
+1. \`mkdir -p \$PAPERCUTS_RUN_DIR/reviews\` and save the change:
+   \`git -C <worktree> diff origin/{{BASE_BRANCH}}...HEAD > \$PAPERCUTS_RUN_DIR/reviews/<KEY>.diff\`.
+2. **Code review.** \`cd <worktree>\` (the skill diffs \`HEAD\` of the current
+   directory), then invoke the Skill tool with \`$review_skill\`. Nobody is
+   there to answer its questions, so put in its arguments everything it would
+   ask for: the fixed point \`origin/{{BASE_BRANCH}}\`; the spec, which is
+   \`\$PAPERCUTS_RUN_DIR/issues/<KEY>.json\` — the tracker is unreachable from
+   this run, so it must not try to fetch it; and that the run is unattended,
+   so it reports findings instead of asking. Save what it returns to
+   \`\$PAPERCUTS_RUN_DIR/reviews/<KEY>.md\`, then \`cd {{CHECKOUT}}\` again.
+$advisor_step
+4. **Judge the findings yourself**, one by one, against the diff and the
+   ticket. A **defect** is something you would refuse to merge: wrong
+   behaviour, an acceptance criterion missed, a rule the repository documents
+   broken, a test that does not fail when the behaviour it covers is broken,
+   a change that cannot be released alone. Everything else — preferences,
+   optional improvements, work outside the ticket — is a **note**. The number
+   of findings decides nothing; a reviewer that found nothing is not proof
+   either, so read the diff.
+5. **Defects go back to a worker**, in the same worktree: spawn a fresh agent
+   (same type and model as the worker) with the item's brief, the defects
+   verbatim with the evidence for each, and the same verbatim instructions.
+   It fixes them in new commits, re-runs the checks and rewrites the PR file.
+   Then review again from step 1. At most **$review_rounds** fix round(s) per
+   item.
+6. If a defect is still there after the last round, **do not publish the
+   item**: it counts as committed but not pushed — queue a \`comment\` listing
+   the open defects, \`assign\` and \`{{IN_PROGRESS}}\`, and say why in the
+   report.
+7. Append to the item's PR file a **Review** section: what the review and each
+   advisor checked, what was fixed because of them, and the notes left open.
+   That is where notes go — never as comments on the pull request.
+"
+else
+  review_phase=""
+fi
+
 template="$(<"$HARNESS_DIR/prompts/orchestrator.md")"
 
 subst() { template="${template//$1/$2}"; }
+# First: the review phase carries placeholders of its own.
+subst '{{REVIEW_PHASE}}'     "$review_phase"
 subst '{{PROJECT}}'          "$project"
 subst '{{REPO}}'             "$(cfg '.project.repo')"
 subst '{{CHECKOUT}}'         "$checkout"
@@ -151,7 +243,7 @@ jq -n \
         # worker is allowed by name, with and without its leading VAR=value
         # assignments. The sandbox still confines what they can write and
         # reach.
-        allow: (
+        allow: ((
           [$cfg.verify.install, $cfg.verify.hook_install, $cfg.verify.hook_probe]
           + ($cfg.verify.checks // [])
           + ($cfg.verify.push_checks // [])
@@ -162,7 +254,12 @@ jq -n \
           | map(., sub("^([A-Za-z_][A-Za-z0-9_]*=[^ ]* +)+"; ""))
           | unique
           | map("Bash(" + . + ":*)")
-        ),
+        )
+        # The review gate invokes one skill; headless, an unapproved Skill call
+        # would wait for an answer nobody gives.
+        # The outer parentheses are not decoration: jq 1.7 (the one macOS ships,
+        # first on the PATH of a login shell) rejects a bare `+` in an object value.
+        + (if ($cfg.review.skill // "") != "" then ["Skill(" + $cfg.review.skill + ")"] else [] end)),
         # Absolute-path rules take a leading "//" and the expanded path already
         # starts with "/", so concatenate a single slash here — "///Users/..."
         # matches nothing.

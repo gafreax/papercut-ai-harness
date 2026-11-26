@@ -437,8 +437,13 @@ export PAPERCUTS_MAX_ITEMS="$MAX_ITEMS"
 # failIfUnavailable, confine writes to the workspace root and forbid escaping
 # via dangerouslyDisableSandbox. acceptEdits + additionalDirectories keeps the
 # file tools inside the workspace too — no bypassPermissions anywhere.
+# Advisor agents for the review gate, when render.sh wrote their definitions.
+AGENT_ARGS=()
+[[ -s "$RUN_DIR/agents.json" ]] && AGENT_ARGS=(--agents "$RUN_DIR/agents.json")
+
 claude -p "$(<"$RUN_DIR/prompt.md")" \
   --model "$ORCH_MODEL" \
+  "${AGENT_ARGS[@]}" \
   --settings "$RUN_DIR/sandbox-settings.json" \
   --permission-mode acceptEdits \
   --add-dir "$WORKSPACE_ROOT" \
