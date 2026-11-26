@@ -124,8 +124,9 @@
     "$comment": "Credentials only a human can renew (a cloud login under a session length policy expires daily). Each check's `test` exits 0 while the credential is valid; `fix` is what the notification tells the human to run. The runner checks them before any project starts: if one has expired it notifies and waits for the login, then starts by itself. install.sh also schedules a check-only job at login and at warn_at, so the login can happen before the run. An empty list turns all of this off.",
     "checks": [],
     "$checks_example": [
-      { "name": "Cloud credentials", "test": "gcloud auth application-default print-access-token >/dev/null", "fix": "gcloud auth application-default login" }
+      { "name": "Cloud credentials", "test": "gcloud auth application-default print-access-token >/dev/null", "fix": "gcloud auth application-default login", "issued_file": "~/.config/gcloud/application_default_credentials.json", "max_age_hours": 22 }
     ],
+    "$issued_file": "Optional, per check: the file the login writes. With max_age_hours, the check fails once the file is that old even if its test still passes, because a session-limited login passes right up to the minute it expires. Set max_age_hours a couple of hours below the session length, so the early warning catches a login that would die during the run.",
     "warn_at": null,
     "$warn_at": "HH:MM local time for the early check. Null means one hour before run.schedule.",
     "wait_minutes": 120,
