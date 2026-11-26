@@ -45,6 +45,7 @@ TODAY="$(date +%Y-%m-%d)"
 STATE_DIR="${PAPERCUTS_STATE_DIR:-$HARNESS_DIR/.state}"
 [[ -n "$LOG" ]] || { mkdir -p "$STATE_DIR/logs"; LOG="$STATE_DIR/logs/papercuts-$TODAY-preflight.log"; }
 
+zmodload zsh/datetime; zmodload -F zsh/stat b:zstat  # zstat only: plain zsh/stat would shadow stat(1)
 cfg() { jq -r "$1 // empty" "$CONFIG"; }
 log() { print -r -- "[$(date +%H:%M:%S)] preflight: $*" >>"$LOG"; }
 
@@ -95,16 +96,38 @@ run_test() {
 # Sets FAILED to "<name> — run: <fix>" lines for the checks still failing.
 check_all() {
   FAILED=()
-  local i name test fix try ok
+  local i name test fix issued max_age try ok
   for (( i = 0; i < n_checks; i++ )); do
     name="$(jq -r --argjson i $i '.preflight.checks[$i].name' "$CONFIG")"
     test="$(jq -r --argjson i $i '.preflight.checks[$i].test' "$CONFIG")"
     fix="$(jq -r --argjson i $i '.preflight.checks[$i].fix // "renew it by hand"' "$CONFIG")"
+    issued="$(jq -r --argjson i $i '.preflight.checks[$i].issued_file // empty' "$CONFIG")"
+    issued="${issued/#\~/$HOME}"
+    max_age="$(jq -r --argjson i $i '.preflight.checks[$i].max_age_hours // empty' "$CONFIG")"
     ok=0
     for (( try = 1; try <= RETRIES; try++ )); do
       if run_test "$test"; then ok=1; break; fi
       (( try < RETRIES )) && sleep "$RETRY_DELAY"
     done
+    # A test only says the credential works now. A login under a
+    # session-length policy works until the minute it does not, so a check
+    # that names the file the login writes and how long a login lasts also
+    # fails once the login is that old: the warning comes before the run,
+    # not two hours into its wait.
+    if (( ok )) && [[ -n "$max_age" ]]; then
+      local age_h
+      if [[ -n "$issued" && -e "$issued" ]]; then
+        age_h=$(( (EPOCHSECONDS - $(zstat +mtime -- "$issued")) / 3600 ))
+      else
+        age_h="?"
+      fi
+      if [[ "$age_h" == "?" ]] || (( age_h >= max_age )); then
+        ok=0
+        log "EXPIRING: $name (logged in $age_h h ago, renew after $max_age h) — fix: $fix"
+        FAILED+=("$name — logged in $age_h h ago, renew it — run: $fix")
+        continue
+      fi
+    fi
     if (( ok )); then
       log "ok: $name"
     else

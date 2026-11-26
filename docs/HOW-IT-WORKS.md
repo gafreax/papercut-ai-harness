@@ -200,6 +200,15 @@ valid, plus the command a human runs to renew it. There are two modes:
   hour before the run: it only checks and notifies, so the login can happen
   before the run is due.
 
+A passing test only says the login works *now*. Under a session length policy
+it keeps working until the minute it expires, so an early check can say "ok" for
+a login that dies before the run: logged in at 09:19, the 09:00 check passes the
+next day and the 10:00 run waits two hours for nobody. A check can therefore
+name the file the login writes (`issued_file`) and how long a login lasts
+(`max_age_hours`). Once the login is that old, the check fails even though its
+test still passes, and the warning arrives an hour before the run instead of
+two hours into it. Logging in again rewrites the file, which ends the wait.
+
 A check fails a few times before it counts: at login or on wake the network is
 often not up yet, and a token refresh that cannot reach the provider looks
 exactly like an expired one. `tests/preflight.sh` covers both modes, with a
