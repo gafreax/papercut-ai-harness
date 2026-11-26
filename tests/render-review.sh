@@ -69,6 +69,17 @@ print -r -- "bin/render.sh:"
 suite "$REAL"
 real_fails=$fails
 
+# The runner starts as a login shell, where macOS puts its own jq (1.7) ahead of
+# Homebrew's: a filter only a newer jq accepts aborts the real run while the
+# suite above stays green. Run it again with every other jq on PATH.
+for jq_bin in ${(u)$(whence -ap jq)}; do
+  [[ "$jq_bin" == "$(whence -p jq)" ]] && continue
+  print -r -- "bin/render.sh with $jq_bin ($("$jq_bin" --version)):"
+  fails=0
+  path=("${jq_bin:h}" $path) suite "$REAL"
+  (( real_fails += fails ))
+done
+
 run_mutant() { # <description> <sed expression>
   local dir; dir="$(mktemp -d)"
   mkdir -p "$dir/bin" && cp -R "$HERE/../prompts" "$dir/prompts"

@@ -243,7 +243,7 @@ jq -n \
         # worker is allowed by name, with and without its leading VAR=value
         # assignments. The sandbox still confines what they can write and
         # reach.
-        allow: (
+        allow: ((
           [$cfg.verify.install, $cfg.verify.hook_install, $cfg.verify.hook_probe]
           + ($cfg.verify.checks // [])
           + ($cfg.verify.push_checks // [])
@@ -257,7 +257,9 @@ jq -n \
         )
         # The review gate invokes one skill; headless, an unapproved Skill call
         # would wait for an answer nobody gives.
-        + (if ($cfg.review.skill // "") != "" then ["Skill(" + $cfg.review.skill + ")"] else [] end),
+        # The outer parentheses are not decoration: jq 1.7 (the one macOS ships,
+        # first on the PATH of a login shell) rejects a bare `+` in an object value.
+        + (if ($cfg.review.skill // "") != "" then ["Skill(" + $cfg.review.skill + ")"] else [] end)),
         # Absolute-path rules take a leading "//" and the expanded path already
         # starts with "/", so concatenate a single slash here — "///Users/..."
         # matches nothing.
